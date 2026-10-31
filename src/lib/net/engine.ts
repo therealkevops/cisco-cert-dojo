@@ -1,4 +1,4 @@
-import type { Ace, Device, Port, Topology } from "./types";
+import type { Ace, ChannelMode, Device, Port, Topology } from "./types";
 import { aclAddrMatch, cidrNet, inCidr, parseCidr, type Cidr } from "./ip";
 import { computeOspf, type OspfResult } from "./ospf";
 
@@ -58,6 +58,26 @@ export type StpView = {
   bridgeId: Record<string, { prio: number; mac: string }>;
 };
 
+export type Bundle = {
+  dev: string;
+  po: string;
+  protocol: "LACP" | "PAgP" | "-";
+  formed: boolean;
+  peer?: [string, string];
+  /** Member port -> P bundled, I stand-alone, s suspended, D down. */
+  members: { port: string; flag: "P" | "I" | "s" | "D"; peer?: [string, string]; why?: string }[];
+};
+
+const PROTO: Record<ChannelMode, Bundle["protocol"]> = { active: "LACP", passive: "LACP", desirable: "PAgP", auto: "PAgP", on: "-" };
+
+/** Does this pair of channel modes negotiate a bundle? Returns a reason when it doesn't. */
+export function channelPair(a: ChannelMode, b: ChannelMode): string | null {
+  if (PROTO[a] !== PROTO[b]) return `${a} (${PROTO[a] === "-" ? "static" : PROTO[a]}) can't bundle with ${b} (${PROTO[b] === "-" ? "static" : PROTO[b]})`;
+  if (a === "passive" && b === "passive") return "both ends are LACP passive, so neither starts the negotiation";
+  if (a === "auto" && b === "auto") return "both ends are PAgP auto, so neither starts the negotiation";
+  return null;
+}
+
 export type ProbeResult = { seq: number; mark: "!" | "." | "U"; from?: string; events: SimEvent[]; note?: string };
 
 const hex2 = (n: number) => n.toString(16).padStart(2, "0");
@@ -67,6 +87,11 @@ export class Net {
   private devs = new Map<string, Device>();
   private devIdx = new Map<string, number>();
   private peers = new Map<string, [string, string]>();
+  /** Cabling as drawn, before EtherChannel bundling. */
+  private physPeers = new Map<string, [string, string]>();
+  /** member `${dev}|${port}` -> Po name, for ports bundled (or suspended) in a channel. */
+  private memberOf = new Map<string, string>();
+  bundles: Bundle[] = [];
   private stpCache = new Map<number, StpView>();
   private ospfCache?: OspfResult;
   macTables = new Map<string, Map<string, { port: string; vlan: number; mac: string }>>();
@@ -91,8 +116,112 @@ export class Net {
     for (const l of this.topo.links) {
       this.peers.set(l.a.join("|"), l.b);
       this.peers.set(l.b.join("|"), l.a);
+      this.physPeers.set(l.a.join("|"), l.b);
+      this.physPeers.set(l.b.join("|"), l.a);
     }
+    this.bundle();
     if (prev) this.inherit(prev);
+  }
+
+  /** Physical cabling state, ignoring bundling (what the port LED shows). */
+  physUp(dev: string, port: string): boolean {
+    const p = this.port(dev, port);
+    if (p && /^Lo\d+$/.test(port)) return !p.shutdown && !this.devs.get(dev)?.off;
+    const peer = this.physPeers.get(`${dev}|${port}`);
+    if (!p || !peer || p.shutdown || this.devs.get(dev)?.off || this.devs.get(peer[0])?.off) return false;
+    const pp = this.port(peer[0], peer[1]);
+    return !!pp && !pp.shutdown;
+  }
+  physPeer(dev: string, port: string) {
+    return this.physPeers.get(`${dev}|${port}`);
+  }
+  bundleOf(dev: string, port: string) {
+    return this.memberOf.get(`${dev}|${port}`);
+  }
+
+  /**
+   * EtherChannel: work out which channel-groups negotiate, then present each formed
+   * bundle to the rest of the engine as one logical Po link. Members that don't
+   * bundle keep working as ordinary ports (stand-alone), like LACP's individual mode.
+   */
+  private bundle() {
+    for (const d of this.topo.devices) {
+      if (!this.isSwitch(d)) continue;
+      const groups = new Map<number, Port[]>();
+      for (const p of d.ports) if (p.channel) groups.set(p.channel.group, [...(groups.get(p.channel.group) ?? []), p]);
+      if (!groups.size) continue;
+      d.portChannels = d.portChannels ?? [];
+      for (const g of groups.keys()) if (!d.portChannels.some((x) => x.name === `Po${g}`)) d.portChannels.push({ name: `Po${g}`, mode: "access", vlan: 1 });
+    }
+    // Decide every member first, then wire up the logical links.
+    const pending: Bundle[] = [];
+    for (const d of this.topo.devices) {
+      if (!this.isSwitch(d)) continue;
+      const groups = new Map<number, Port[]>();
+      for (const p of d.ports) if (p.channel) groups.set(p.channel.group, [...(groups.get(p.channel.group) ?? []), p]);
+      for (const [g, members] of groups) {
+        const b: Bundle = { dev: d.id, po: `Po${g}`, protocol: PROTO[members[0].channel!.mode], formed: false, members: [] };
+        const votes = new Map<string, number>();
+        for (const m of members) {
+          const peer = this.physPeers.get(`${d.id}|${m.name}`);
+          if (!this.physUp(d.id, m.name) || !peer) {
+            b.members.push({ port: m.name, flag: "D", why: "link down" });
+            continue;
+          }
+          const pp = this.port(peer[0], peer[1])!;
+          if (!pp.channel) {
+            b.members.push({ port: m.name, flag: "I", peer, why: `${peer[0]} ${peer[1]} is not in a channel-group` });
+            continue;
+          }
+          const why = channelPair(m.channel!.mode, pp.channel.mode);
+          if (why) {
+            b.members.push({ port: m.name, flag: "I", peer, why });
+            continue;
+          }
+          const key = `${peer[0]}|Po${pp.channel.group}`;
+          votes.set(key, (votes.get(key) ?? 0) + 1);
+          b.members.push({ port: m.name, flag: "P", peer });
+        }
+        // All bundled members must lead to the same neighbour bundle; extras are suspended.
+        const winner = [...votes.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+        for (const m of b.members) {
+          if (m.flag !== "P") continue;
+          const pp = this.port(m.peer![0], m.peer![1])!;
+          if (`${m.peer![0]}|Po${pp.channel!.group}` !== winner) Object.assign(m, { flag: "s", why: "member leads to a different neighbour than the rest of the bundle" });
+        }
+        const po = d.portChannels!.find((x) => x.name === b.po)!;
+        b.formed = !!winner && !po.shutdown;
+        if (winner) b.peer = winner.split("|") as [string, string];
+        pending.push(b);
+      }
+    }
+    for (const b of pending) {
+      const d = this.devs.get(b.dev)!;
+      d.ports.push(...d.portChannels!.filter((x) => x.name === b.po && !d.ports.some((p) => p.name === x.name)));
+      if (!b.formed) continue;
+      const other = pending.find((x) => x.dev === b.peer![0] && x.po === b.peer![1]);
+      if (!other?.formed) {
+        b.formed = false;
+        continue;
+      }
+      this.peers.set(`${b.dev}|${b.po}`, b.peer!);
+      for (const m of b.members) {
+        if (m.flag === "I" || m.flag === "D") continue;
+        this.peers.delete(`${b.dev}|${m.port}`);
+        this.memberOf.set(`${b.dev}|${m.port}`, b.po);
+      }
+    }
+    this.bundles = pending;
+  }
+
+  /** The member cable a bundle uses for this frame (a simple src/dst MAC hash). */
+  private pickMember(dev: string, po: string, frame: Frame): [string, string] | null {
+    const b = this.bundles.find((x) => x.dev === dev && x.po === po);
+    const up = b?.members.filter((m) => m.flag === "P" && this.physUp(dev, m.port)) ?? [];
+    if (!up.length) return null;
+    const h = [...(frame.src + frame.dst)].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+    const m = up[h % up.length];
+    return [m.port, m.peer![1]];
   }
 
   private inherit(prev: Net) {
@@ -159,10 +288,19 @@ export class Net {
     return `0c${hex2(this.devIdx.get(dev)!)}.0000.0001`;
   }
 
-  /** Physical link state: both ends enabled and cabled. Loopbacks are up unless shut. */
+  /**
+   * Usable link state for forwarding: both ends enabled and cabled. Loopbacks are up
+   * unless shut; a Port-channel is up while any bundled member is; bundled members
+   * themselves are not used directly.
+   */
   linkUp(dev: string, port: string): boolean {
     const p = this.port(dev, port);
     if (p && /^Lo\d+$/.test(port)) return !p.shutdown && !this.devs.get(dev)?.off;
+    if (/^Po\d+$/.test(port)) {
+      const b = this.bundles.find((x) => x.dev === dev && x.po === port);
+      return !!b?.formed && !p?.shutdown && b.members.some((m) => m.flag === "P" && this.physUp(dev, m.port));
+    }
+    if (this.memberOf.has(`${dev}|${port}`)) return false;
     const peer = this.peer(dev, port);
     if (!p || !peer || p.shutdown || this.devs.get(dev)?.off || this.devs.get(peer[0])?.off) return false;
     const pp = this.port(peer[0], peer[1]);
@@ -407,6 +545,12 @@ export class Net {
     const peer = this.peer(dev, port);
     if (!peer || !this.linkUp(dev, port)) {
       this.log({ dev, kind: "drop", frame, note: `${port} is down, so the frame cannot leave` });
+      return;
+    }
+    if (/^Po\d+$/.test(port)) {
+      const m = this.pickMember(dev, port, frame)!;
+      this.log({ dev, kind: "tx", wire: { from: [dev, m[0]], to: [peer[0], m[1]] }, frame, tag, note: `${dev} ${port} (member ${m[0]}, chosen by the src/dst MAC hash) → ${peer[0]} ${peer[1]}${tag ? ` (802.1Q tag ${tag})` : ""}` });
+      this.queue.push({ dev: peer[0], port: peer[1], frame, tag });
       return;
     }
     this.log({ dev, kind: "tx", wire: { from: [dev, port], to: peer }, frame, tag, note: `${dev} ${port} → ${peer[0]} ${peer[1]}${tag ? ` (802.1Q tag ${tag})` : ""}` });

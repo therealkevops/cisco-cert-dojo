@@ -286,9 +286,11 @@ export function Bench({ scenario }: { scenario?: Scenario }) {
     const x1 = Math.max(...items.map((i) => i.x + i.w)) + 80;
     const y1 = Math.max(...items.map((i) => i.y + i.h)) + 90;
     const h = r.height - (tabs.length || run ? dockH : 0) - 70;
-    const k = Math.min(1.4, Math.max(0.3, Math.min(r.width / (x1 - x0), h / (y1 - y0))));
-    setView({ k, x: (r.width - (x1 - x0) * k) / 2 - x0 * k, y: 70 + (h - (y1 - y0) * k) / 2 - y0 * k });
-  }, [topo, tabs.length, run, dockH]);
+    // Leave room for the challenge panel on wide screens.
+    const w = r.width - (challenge && r.width > 900 ? 390 : 0);
+    const k = Math.min(1.4, Math.max(0.3, Math.min(w / (x1 - x0), h / (y1 - y0))));
+    setView({ k, x: (w - (x1 - x0) * k) / 2 - x0 * k, y: 70 + (h - (y1 - y0) * k) / 2 - y0 * k });
+  }, [topo, tabs.length, run, dockH, challenge]);
 
   // Fit challenge topologies on first paint.
   useEffect(() => {
@@ -1086,7 +1088,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           </tbody>
         </table>
         <p className="silk" style={{ marginTop: 10 }}>
-          Simulated: VLANs, trunks, RSTP, ARP, static routing, ACLs, ICMP. Not yet: OSPF/EIGRP, EtherChannel, NAT, subinterfaces.
+          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), ACLs, ICMP. Not yet: EIGRP/BGP, NAT, DHCP, subinterfaces.
         </p>
       </div>
     </div>

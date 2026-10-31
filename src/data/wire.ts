@@ -1,4 +1,4 @@
-import type { Device, Ospf, Port, Scenario, Topology } from "@/lib/net/types";
+import type { ChannelMode, Device, Ospf, Port, Scenario, Topology } from "@/lib/net/types";
 
 // Wire Room scenarios. Every challenge starts from the same campus so the
 // learner builds a mental map once, then hunts a different fault each time.
@@ -443,6 +443,107 @@ scenarios.push(
       { type: "ospfRole", device: "R1", iface: "Gi0/0", role: "DROTHER", label: "R1 is DROTHER (never DR/BDR)" },
       ...reachAll,
     ],
+  },
+);
+
+// --- EtherChannel -------------------------------------------------------------------
+//
+//   PC1 (v10) ─┐                         ┌─ PC2 (v10)
+//              SW1 ══ Gi1/0/23-24 / Po1 ══ SW2
+//   PC3 (v20) ─┘        802.1Q trunk     └─ SRV (v20)
+
+function lagSwitch(id: string, x: number, mode: ChannelMode): Device {
+  const ports: Port[] = Array.from({ length: 24 }, (_, i) => ({ name: `Gi1/0/${i + 1}`, mode: "access" as const, vlan: 1 }));
+  ports[0].vlan = 10;
+  ports[1].vlan = 20;
+  // Members carry the same config as the Port-channel, as IOS requires.
+  for (const i of [22, 23]) ports[i] = { name: `Gi1/0/${i + 1}`, mode: "trunk", channel: { group: 1, mode } };
+  return { id, kind: "switch", x, y: 250, ports, portChannels: [{ name: "Po1", mode: "trunk" }] };
+}
+
+export function lagLab(): Topology {
+  return {
+    devices: [
+      lagSwitch("SW1", 320, "active"),
+      lagSwitch("SW2", 700, "passive"),
+      host("PC1", "pc", 160, 130, "10.10.0.11/24", "10.10.0.1"),
+      host("PC3", "pc", 160, 390, "10.20.0.13/24", "10.20.0.1"),
+      host("PC2", "pc", 860, 130, "10.10.0.12/24", "10.10.0.1"),
+      host("SRV", "server", 860, 390, "10.20.0.10/24", "10.20.0.1"),
+    ],
+    links: [
+      { a: ["SW1", "Gi1/0/23"], b: ["SW2", "Gi1/0/23"] },
+      { a: ["SW1", "Gi1/0/24"], b: ["SW2", "Gi1/0/24"] },
+      { a: ["SW1", "Gi1/0/1"], b: ["PC1", "eth0"] },
+      { a: ["SW1", "Gi1/0/2"], b: ["PC3", "eth0"] },
+      { a: ["SW2", "Gi1/0/1"], b: ["PC2", "eth0"] },
+      { a: ["SW2", "Gi1/0/2"], b: ["SRV", "eth0"] },
+    ],
+  };
+}
+
+function lagTweak(fn: (t: Topology) => void): Topology {
+  const t = lagLab();
+  fn(t);
+  return t;
+}
+const members = (t: Topology, id: string) => dev(t, id).ports.filter((p) => p.channel);
+const lagReach: Scenario["goals"] = [
+  { type: "reach", from: "PC1", to: "10.10.0.12", expect: true, label: "PC1 reaches PC2 (VLAN 10)" },
+  { type: "reach", from: "PC3", to: "10.20.0.10", expect: true, label: "PC3 reaches SRV (VLAN 20)" },
+];
+
+scenarios.push(
+  {
+    id: "lag",
+    title: "EtherChannel example",
+    exam: "encor",
+    objective: "3.1.b",
+    kind: "sandbox",
+    brief:
+      "Two switches joined by a two-link LACP bundle (Po1) carrying VLANs 10 and 20. Try `show etherchannel summary`, then shut one member and ping again: the bundle stays up. Switch to the L2 lens to see that spanning tree treats Po1 as a single link.",
+    topology: lagLab(),
+    goals: [],
+  },
+  {
+    id: "lacp-passive",
+    title: "The bundle that never formed",
+    exam: "encor",
+    objective: "3.1.b",
+    kind: "challenge",
+    brief:
+      "Ticket #7002: the two uplinks between SW1 and SW2 were meant to be one 2 Gb/s bundle. Pings work, but monitoring shows one link idle and spanning tree blocking it.",
+    hint: "`show etherchannel summary` on both switches. What do the member flags say, and which LACP mode is each side in?",
+    debrief:
+      "Both ends were LACP passive. Passive answers LACPDUs but never sends them, so nothing negotiates and the members run stand-alone (I), with STP blocking one. At least one side must be active. The traffic still flowing is why this goes unnoticed in real networks.",
+    topology: lagTweak((t) => members(t, "SW1").forEach((p) => (p.channel!.mode = "passive"))),
+    goals: [{ type: "bundle", device: "SW1", po: "Po1", label: "Po1 is bundled (SU) on SW1" }, ...lagReach],
+  },
+  {
+    id: "lacp-on",
+    title: "Static meets LACP",
+    exam: "encor",
+    objective: "3.1.b",
+    kind: "challenge",
+    brief: "Ticket #7009: SW1 was configured from an old template that hard-codes the bundle. SW2 runs LACP. The Port-channel is down on both sides.",
+    hint: "Mode `on` sends no negotiation protocol at all. Which mode combinations can form a bundle?",
+    debrief:
+      "`mode on` never speaks LACP, so an LACP-active peer gets no partner and the bundle stays down. Use LACP on both ends (active/active or active/passive), or `on` on both. Mixing static and LACP is a classic way to cause loops or blackholes.",
+    topology: lagTweak((t) => members(t, "SW1").forEach((p) => (p.channel!.mode = "on"))),
+    goals: [{ type: "bundle", device: "SW1", po: "Po1", label: "Po1 is bundled (SU) on SW1" }, ...lagReach],
+  },
+  {
+    id: "po-access",
+    title: "Bundle up, VLANs down",
+    exam: "encor",
+    objective: "3.1.b",
+    kind: "challenge",
+    brief: "Ticket #7015: SW2 was replaced. `show etherchannel summary` says Po1 is SU on both switches, yet no host on SW1 can reach anything on SW2.",
+    hint: "Configuration that matters lives on the Port-channel interface, not the members. Compare `show interfaces trunk` on both switches.",
+    debrief:
+      "SW2's Port-channel1 was an access port while SW1's was a trunk. SW1 tags VLAN 10 and 20 frames, and an access port drops tagged frames. Configure trunking on interface Port-channel1 itself; the members follow it.",
+    topology: lagTweak((t) => (dev(t, "SW2").portChannels![0] = { name: "Po1", mode: "access", vlan: 1 })),
+    goals: lagReach,
   },
 );
 

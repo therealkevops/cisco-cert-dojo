@@ -105,6 +105,38 @@ export function BenchCanvas(p: Props) {
   }, [p.shown]);
   const drops = useMemo(() => new Set(p.shown.filter((e) => e.kind === "drop").map((e) => e.dev)), [p.shown]);
 
+  // Parallel cables between the same two devices are drawn as a fan of curves.
+  const fan = useMemo(() => {
+    const groups = new Map<string, number[]>();
+    topo.links.forEach((l, i) => {
+      const k = [l.a[0], l.b[0]].sort().join("~");
+      groups.set(k, [...(groups.get(k) ?? []), i]);
+    });
+    const off = new Map<number, number>();
+    for (const idx of groups.values()) idx.forEach((i, n) => off.set(i, (n - (idx.length - 1) / 2) * 34));
+    return off;
+  }, [topo.links]);
+  const curve = (l: Topology["links"][number], i: number, flip = false) => {
+    let a = pos(l.a[0]);
+    let b = pos(l.b[0]);
+    // Offsets are measured in the a→b frame sorted by device id, so both ends agree.
+    const sorted = l.a[0] < l.b[0];
+    let off = (fan.get(i) ?? 0) * (sorted ? 1 : -1);
+    if (flip) [a, b, off] = [b, a, -off];
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const c = { x: (a.x + b.x) / 2 + (-(b.y - a.y) / len) * off * 2, y: (a.y + b.y) / 2 + ((b.x - a.x) / len) * off * 2 };
+    return {
+      d: off ? `M${a.x} ${a.y} Q${c.x} ${c.y} ${b.x} ${b.y}` : `M${a.x} ${a.y} L${b.x} ${b.y}`,
+      at: (t: number) => ({ x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t * t * b.x, y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t * t * b.y }),
+    };
+  };
+  const wirePath = (from: [string, string], to: [string, string]) => {
+    const i = topo.links.findIndex((l) => (l.a[0] === from[0] && l.a[1] === from[1]) || (l.b[0] === from[0] && l.b[1] === from[1]));
+    if (i < 0) return `M${pos(from[0]).x} ${pos(from[0]).y} L${pos(to[0]).x} ${pos(to[0]).y}`;
+    const l = topo.links[i];
+    return curve(l, i, l.a[0] !== from[0] || l.a[1] !== from[1]).d;
+  };
+
   const startItemDrag = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -276,7 +308,8 @@ export function BenchCanvas(p: Props) {
           const a = pos(l.a[0]);
           const b = pos(l.b[0]);
           const key = [l.a.join("|"), l.b.join("|")].sort().join("~");
-          const up = net.linkUp(l.a[0], l.a[1]);
+          const geo = curve(l, i);
+          const up = net.physUp(l.a[0], l.a[1]);
           const sel = selection.has(linkId(i));
           const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
           const ux = (b.x - a.x) / len;
@@ -284,7 +317,8 @@ export function BenchCanvas(p: Props) {
           const da = topo.devices.find((d) => d.id === l.a[0])!;
           const db = topo.devices.find((d) => d.id === l.b[0])!;
           const carries = (dv: typeof da, pn: string) => {
-            const pt = dv.ports.find((x) => x.name === pn);
+            const name = net.bundleOf(dv.id, pn) ?? pn;
+            const pt = net.port(dv.id, name);
             return !!pt && net.isSwitch(dv) && net.portMode(dv, pt) !== "routed" && net.carries(dv, pt, p.vlan);
           };
           const inVlan = p.lens === "l2" && (carries(da, l.a[1]) || carries(db, l.b[1]));
@@ -304,28 +338,37 @@ export function BenchCanvas(p: Props) {
                 p.onContext(e, { type: "link", id: linkId(i), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
               }}
             >
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={14} style={{ cursor: "pointer" }} />
-              {sel && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--amber)" strokeWidth={7} strokeOpacity={0.35} />}
-              <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={base} strokeWidth={p.lens === "l2" && inVlan ? 3 : 1.8} strokeDasharray={up ? undefined : "5 6"} pointerEvents="none" />
-              {dirs?.has("ctl") && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--muted)" strokeWidth={6} strokeOpacity={0.3} pointerEvents="none" />}
-              {dirs?.has("out") && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--amber)" strokeWidth={3.5} transform={`translate(${-uy * 3} ${ux * 3})`} pointerEvents="none" />}
-              {dirs?.has("back") && <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="var(--green)" strokeWidth={3.5} transform={`translate(${uy * 3} ${-ux * 3})`} pointerEvents="none" />}
+              <path d={geo.d} fill="none" stroke="transparent" strokeWidth={14} style={{ cursor: "pointer" }} />
+              {sel && <path d={geo.d} fill="none" stroke="var(--amber)" strokeWidth={7} strokeOpacity={0.35} />}
+              <path d={geo.d} fill="none" stroke={base} strokeWidth={p.lens === "l2" && inVlan ? 3 : 1.8} strokeDasharray={up ? undefined : "5 6"} pointerEvents="none" />
+              {dirs?.has("ctl") && <path d={geo.d} fill="none" stroke="var(--muted)" strokeWidth={6} strokeOpacity={0.3} pointerEvents="none" />}
+              {dirs?.has("out") && <path d={geo.d} fill="none" stroke="var(--amber)" strokeWidth={3.5} transform={`translate(${-uy * 3} ${ux * 3})`} pointerEvents="none" />}
+              {dirs?.has("back") && <path d={geo.d} fill="none" stroke="var(--green)" strokeWidth={3.5} transform={`translate(${uy * 3} ${-ux * 3})`} pointerEvents="none" />}
               {(
                 [
-                  [a, l.a, 1],
-                  [b, l.b, -1],
+                  [l.a, 38 / len, 54 / len, 1],
+                  [l.b, 1 - 38 / len, 1 - 54 / len, -1],
                 ] as const
-              ).map(([pt, [dev, port], sgn]) => {
-                const x = pt.x + ux * 38 * sgn;
-                const y = pt.y + uy * 38 * sgn;
-                const role = stp?.roles[`${dev}|${port}`];
-                const led = !net.linkUp(dev, port) ? "var(--red)" : role === "alt" ? "var(--amber)" : "var(--green)";
+              ).map(([[dev, port], tLed, tLbl, sgn]) => {
+                const { x, y } = geo.at(tLed);
+                const lp = geo.at(tLbl);
+                const po = net.bundleOf(dev, port);
+                const role = stp?.roles[`${dev}|${po ?? port}`];
+                const led = !net.physUp(dev, port) ? "var(--red)" : role === "alt" ? "var(--amber)" : "var(--green)";
                 return (
                   <g key={port} pointerEvents="none">
                     <circle cx={x} cy={y} r={3.6} fill={led} />
                     {view.k > 0.55 && (
-                      <text x={x + ux * 16 * sgn + (Math.abs(uy) > 0.5 ? 7 * sgn : 0)} y={y + uy * 16 * sgn + (Math.abs(uy) > 0.5 ? 3 : -6)} fontSize={10} fill="var(--muted)" textAnchor={Math.abs(uy) > 0.5 ? (sgn > 0 ? "start" : "end") : "middle"} className="halo">
+                      <text
+                        x={lp.x + (Math.abs(uy) > 0.5 ? 7 * sgn : 0)}
+                        y={lp.y + (Math.abs(uy) > 0.5 ? 3 : -6)}
+                        fontSize={10}
+                        fill="var(--muted)"
+                        textAnchor={Math.abs(uy) > 0.5 ? (sgn > 0 ? "start" : "end") : "middle"}
+                        className="halo"
+                      >
                         {port}
+                        {po ? ` · ${po}` : ""}
                         {role === "alt" ? " · BLK" : ""}
                       </text>
                     )}
@@ -344,7 +387,7 @@ export function BenchCanvas(p: Props) {
         {/* animated frame */}
         {p.current?.kind === "tx" && p.current.wire && (
           <circle key={p.current.id} r={7} fill={p.current.dir === "back" ? "var(--green)" : p.current.dir === "out" ? "var(--amber)" : "var(--ink-2)"} stroke="var(--bg)" strokeWidth={2} pointerEvents="none">
-            <animateMotion dur="0.45s" fill="freeze" path={`M${pos(p.current.wire.from[0]).x} ${pos(p.current.wire.from[0]).y} L${pos(p.current.wire.to[0]).x} ${pos(p.current.wire.to[0]).y}`} />
+            <animateMotion dur="0.45s" fill="freeze" path={wirePath(p.current.wire.from, p.current.wire.to)} />
           </circle>
         )}
 

@@ -13,8 +13,9 @@ export function showIpIntBrief(net: Net, dev: string): string {
   const l3 = new Map(net.l3Ifs(dev).map((i) => [i.name, i]));
   for (const p of d.ports) {
     const ip = l3.get(p.name)?.cidr.ip ?? "unassigned";
-    const status = p.shutdown ? "administratively down" : net.peer(dev, p.name) ? (net.linkUp(dev, p.name) ? "up" : "down") : "down";
-    rows.push(pad(p.name, 22) + pad(ip, 16) + pad(status, 22) + (net.linkUp(dev, p.name) ? "up" : "down"));
+    const up = /^Po\d+$/.test(p.name) ? net.linkUp(dev, p.name) : net.physUp(dev, p.name);
+    const status = p.shutdown ? "administratively down" : up ? "up" : "down";
+    rows.push(pad(p.name, 22) + pad(ip, 16) + pad(status, 22) + (up ? "up" : "down"));
   }
   for (const s of d.svis ?? []) {
     const up = net.sviUp(d, s.vlan);
@@ -166,8 +167,23 @@ export function showRun(net: Net, dev: string): string {
     L.push("!");
   }
   if (d.kind === "l3switch") L.push("ip routing", "!");
+  for (const po of d.portChannels ?? []) {
+    L.push(`interface ${longIf(po.name)}`);
+    if (po.description) L.push(` description ${po.description}`);
+    if ((po.mode ?? "access") === "trunk") {
+      if (po.native && po.native !== 1) L.push(` switchport trunk native vlan ${po.native}`);
+      if (po.allowed) L.push(` switchport trunk allowed vlan ${po.allowed.join(",")}`);
+      L.push(" switchport mode trunk");
+    } else {
+      if ((po.vlan ?? 1) !== 1) L.push(` switchport access vlan ${po.vlan}`);
+      L.push(" switchport mode access");
+    }
+    if (po.shutdown) L.push(" shutdown");
+    L.push("!");
+  }
   if (d.kind === "switch" && d.gateway) L.push(`ip default-gateway ${d.gateway}`, "!");
-  for (const p of d.ports) {
+  const pos = (d.portChannels ?? []).map((x) => x.name);
+  for (const p of d.ports.filter((x) => !pos.includes(x.name))) {
     L.push(`interface ${longIf(p.name)}`);
     if (p.description) L.push(` description ${p.description}`);
     const mode = net.portMode(d, p);
@@ -189,6 +205,7 @@ export function showRun(net: Net, dev: string): string {
     if (p.aclIn) L.push(` ip access-group ${p.aclIn} in`);
     if (p.aclOut) L.push(` ip access-group ${p.aclOut} out`);
     L.push(...ifOspfLines(d, p));
+    if (p.channel) L.push(` channel-group ${p.channel.group} mode ${p.channel.mode}`);
     if (p.shutdown) L.push(" shutdown");
     L.push("!");
   }
@@ -252,7 +269,7 @@ export function showIntStatus(net: Net, dev: string): string {
   const d = net.device(dev);
   const rows = ["Port         Name               Status       Vlan       Duplex  Speed Type"];
   for (const p of d.ports) {
-    const status = p.shutdown ? "disabled" : net.linkUp(dev, p.name) ? "connected" : "notconnect";
+    const status = p.shutdown ? "disabled" : (/^Po\d+$/.test(p.name) ? net.linkUp(dev, p.name) : net.physUp(dev, p.name)) ? "connected" : "notconnect";
     const mode = net.portMode(d, p);
     const vlan = mode === "trunk" ? "trunk" : mode === "routed" ? "routed" : String(p.vlan ?? 1);
     rows.push(`${pad(p.name, 13)}${pad((p.description ?? "").slice(0, 18), 19)}${pad(status, 13)}${pad(vlan, 11)}${pad("a-full", 8)}${pad("a-1000", 6)}10/100/1000BaseTX`);
@@ -269,8 +286,8 @@ export function showCdp(net: Net, dev: string): string {
     "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID",
   ];
   for (const p of d.ports) {
-    const peer = net.peer(dev, p.name);
-    if (!peer || !net.linkUp(dev, p.name)) continue;
+    const peer = net.physPeer(dev, p.name);
+    if (!peer || !net.physUp(dev, p.name)) continue;
     const pd = net.device(peer[0]);
     if (net.isHost(pd)) continue; // hosts do not speak CDP
     rows.push(`${pad(pd.id, 17)}${pad(p.name, 18)}${pad(150, 11)}${pad(caps[pd.kind], 12)}${pad(pd.kind === "router" ? "vRouter" : "vSwitch", 10)}${peer[1]}`);
@@ -286,8 +303,8 @@ export function showVersion(net: Net, dev: string): string {
     `${d.id} uptime is 0 minutes`,
     `${d.ports.length} Gigabit Ethernet interfaces`,
     "",
-    "Simulated: VLANs, 802.1Q, RSTP, ARP, static routing, extended ACLs, ICMP.",
-    "Not simulated yet: dynamic routing protocols, EtherChannel, NAT, subinterfaces.",
+    "Simulated: VLANs, 802.1Q, RSTP, EtherChannel, ARP, static routing, OSPFv2, extended ACLs, ICMP.",
+    "Not simulated yet: EIGRP, BGP, NAT, DHCP, subinterfaces.",
   ].join("\n");
 }
 
@@ -373,4 +390,26 @@ export function debugOspfAdj(net: Net, dev: string): string {
   if (!probs.length) lines.push("(no adjacency errors: every OSPF neighbour that is reachable passes the hello checks)");
   for (const p of probs) lines.push(`*Oct 31 10:0${lines.length}:12: OSPF-1 ADJ   ${p.iface}: ${p.text}`);
   return lines.join("\n");
+}
+
+export function showEtherchannel(net: Net, dev: string): string {
+  const list = net.bundles.filter((b) => b.dev === dev);
+  const rows = [
+    "Flags:  D - down        P - bundled in port-channel",
+    "        I - stand-alone s - suspended",
+    "        S - Layer2      U - in use",
+    "",
+    `Number of channel-groups in use: ${list.length}`,
+    `Number of aggregators:           ${list.length}`,
+    "",
+    "Group  Port-channel  Protocol    Ports",
+    "------+-------------+-----------+-----------------------------------------------",
+  ];
+  for (const b of list) {
+    const ports = b.members.map((m) => `${m.port}(${m.flag})`).join("  ");
+    rows.push(`${pad(b.po.slice(2), 7)}${pad(`${b.po}(${b.formed && net.linkUp(dev, b.po) ? "SU" : "SD"})`, 16)}${pad(b.protocol, 10)}${ports}`);
+  }
+  const why = list.flatMap((b) => b.members.filter((m) => m.why && m.flag !== "D").map((m) => `  ${m.port}: ${m.why}`));
+  if (why.length) rows.push("", "Not bundled:", ...why);
+  return rows.join("\n");
 }

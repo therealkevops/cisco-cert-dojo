@@ -21,7 +21,11 @@ export type Port = {
   /** Interface MTU used by OSPF's database exchange check. Default 1500. */
   mtu?: number;
   ospf?: IfOspf;
+  /** `channel-group N mode X` on a physical switch port. */
+  channel?: { group: number; mode: ChannelMode };
 };
+
+export type ChannelMode = "active" | "passive" | "desirable" | "auto" | "on";
 
 /** Per-interface OSPF settings (`ip ospf ...`). */
 export type IfOspf = {
@@ -82,6 +86,8 @@ export type Device = {
   locked?: boolean;
   acls?: Record<string, Ace[]>;
   ospf?: Ospf;
+  /** Logical Port-channel interfaces ("Po1"), configured like switchports. */
+  portChannels?: Port[];
 };
 
 export type Link = { a: [string, string]; b: [string, string] };
@@ -98,6 +104,8 @@ export type Goal =
   | { type: "ospfFull"; device: string; neighbor: string; label: string }
   /** The device's interface holds this OSPF role on its segment. */
   | { type: "ospfRole"; device: string; iface: string; role: "DR" | "BDR" | "DROTHER"; label: string }
+  /** The device's Port-channel is bundled (SU). */
+  | { type: "bundle"; device: string; po: string; label: string }
   /** A route for exactly this prefix is (or is not) in the device's table, optionally with this code. */
   | { type: "route"; device: string; prefix: string; code?: string; expect: boolean; label: string };
 

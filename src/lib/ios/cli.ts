@@ -6,6 +6,7 @@ import {
   longIf,
   showAcls,
   showArp,
+  showEtherchannel,
   debugOspfAdj,
   showIpProtocols,
   showOspf,
@@ -124,6 +125,7 @@ const IF_TYPES: { full: string; short: string; min: number }[] = [
   { full: "fastethernet", short: "Fa", min: 1 },
   { full: "vlan", short: "Vlan", min: 1 },
   { full: "loopback", short: "Lo", min: 2 },
+  { full: "port-channel", short: "Po", min: 2 },
 ];
 
 function canonIf(raw: string): string | null {
@@ -170,9 +172,10 @@ function readArg(n: Node, tokens: string[], i: number, c: Ctx): { consumed: numb
         if (!name) return false;
         if (name.startsWith("Vlan")) return /^Vlan\d+$/.test(name) && +name.slice(4) >= 1 && +name.slice(4) <= 4094 && isSwitch(c);
         if (name.startsWith("Lo")) return /^Lo\d+$/.test(name) && +name.slice(2) <= 2147483647 && isL3(c);
+        if (name.startsWith("Po")) return /^Po\d+$/.test(name) && +name.slice(2) >= 1 && +name.slice(2) <= 48 && isSwitch(c);
         return c.dev.ports.some((p) => p.name.toLowerCase() === name.toLowerCase());
       };
-      const fix = (name: string) => (name.startsWith("Vlan") || name.startsWith("Lo") ? name : c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name);
+      const fix = (name: string) => (name.startsWith("Vlan") || name.startsWith("Lo") || name.startsWith("Po") ? name : c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name);
       const one = canonIf(t);
       if (ok(one)) return { consumed: 1, value: fix(one!) };
       if (i + 1 < tokens.length) {
@@ -249,6 +252,7 @@ function showTree(): Node[] {
       run: (c) => say(c, c.net.vlans().map((v) => showSpanningTree(c.net, c.s.dev, v)).join("\n\n")),
       sub: [kw("vlan", "VLAN Switch Spanning Tree", { sub: [arg("num", "vlan", "<1-4094>", "VLAN number", { range: [1, 4094], run: (c) => say(c, showSpanningTree(c.net, c.s.dev, +c.a.vlan)) })] })],
     }),
+    kw("etherchannel", "EtherChannel information", { when: isSwitch, sub: [kw("summary", "One-line summary per channel-group", { run: (c) => say(c, showEtherchannel(c.net, c.s.dev)) })] }),
     kw("access-lists", "List access lists", { run: (c) => say(c, showAcls(c.net, c.s.dev)) }),
     kw("cdp", "CDP information", { sub: [kw("neighbors", "CDP neighbor entries", { run: (c) => say(c, showCdp(c.net, c.s.dev)) })] }),
   ];
@@ -324,7 +328,7 @@ function eachIf(c: Ctx, fn: (p: Device["ports"][number] | NonNullable<Device["sv
   for (const name of c.s.mode.ifs) {
     edit(c, (d) => {
       const svi = name.startsWith("Vlan") ? d.svis?.find((s) => s.vlan === +name.slice(4)) : undefined;
-      const p = svi ?? d.ports.find((x) => x.name === name)!;
+      const p = svi ?? d.ports.find((x) => x.name === name) ?? d.portChannels!.find((x) => x.name === name)!;
       const msg = fn(p, !!svi, d);
       if (msg) say(c, msg);
     });
@@ -442,12 +446,30 @@ function rootPrimary(c: Ctx) {
   }
 }
 
+/** `channel-group N mode X`: joins the bundle, creating Port-channelN from this port's config if needed. */
+function channelGroup(c: Ctx, g: number, mode: NonNullable<Device["ports"][number]["channel"]>["mode"]) {
+  if (c.s.mode.m !== "if") return;
+  if (c.s.mode.ifs.some((n) => !/^Gi/.test(n))) return say(c, "% Only physical switch ports can join a channel group");
+  const first = c.dev.ports.find((p) => p.name === (c.s.mode as { ifs: string[] }).ifs[0])!;
+  const proto = (m: string) => (m === "active" || m === "passive" ? "LACP" : m === "on" ? "on" : "PAgP");
+  const clash = c.dev.ports.find((p) => p.channel?.group === g && proto(p.channel.mode) !== proto(mode) && !(c.s.mode as { ifs: string[] }).ifs.includes(p.name));
+  if (clash) return say(c, `% Command rejected (Port-channel${g}, ${first.name}): channel ${g} already uses ${proto(clash.channel!.mode)} on ${clash.name}`);
+  if (!c.dev.portChannels?.some((p) => p.name === `Po${g}`)) {
+    edit(c, (d) => (d.portChannels = [...(d.portChannels ?? []), { name: `Po${g}`, mode: first.mode === "routed" ? "access" : (first.mode ?? "access"), vlan: first.vlan, allowed: first.allowed, native: first.native }]));
+    say(c, `Creating a port-channel interface Port-channel ${g}`);
+  }
+  portOnly(c, "% Not applicable to an SVI", (p) => {
+    p.channel = { group: g, mode };
+  });
+}
+
 function enterIfs(c: Ctx, ifs: string[]) {
   for (const name of ifs) {
     if (name.startsWith("Vlan")) {
       const vlan = +name.slice(4);
       if (!c.dev.svis?.some((s) => s.vlan === vlan)) edit(c, (d) => (d.svis = [...(d.svis ?? []), { vlan, ip: "" }]));
     }
+    if (name.startsWith("Po") && !c.dev.portChannels?.some((p) => p.name === name)) edit(c, (d) => (d.portChannels = [...(d.portChannels ?? []), { name, mode: "access", vlan: 1 }]));
     if (name.startsWith("Lo") && !c.dev.ports.some((p) => p.name === name)) {
       edit(c, (d) => d.ports.push(d.kind === "l3switch" ? { name, mode: "routed" } : { name }));
       say(c, `%LINEPROTO-5-UPDOWN: Line protocol on Interface ${longIf(name)}, changed state to up`);
@@ -633,6 +655,11 @@ function configTree(): Node[] {
             run: (c) =>
               c.a.if.startsWith("Vlan")
                 ? edit(c, (d) => (d.svis = (d.svis ?? []).filter((s) => s.vlan !== +c.a.if.slice(4))))
+                : c.a.if.startsWith("Po")
+                  ? edit(c, (d) => {
+                      d.portChannels = (d.portChannels ?? []).filter((p) => p.name !== c.a.if);
+                      for (const p of d.ports) if (p.channel?.group === +c.a.if.slice(2)) delete p.channel;
+                    })
                 : c.a.if.startsWith("Lo")
                   ? edit(c, (d) => (d.ports = d.ports.filter((p) => p.name !== c.a.if)))
                   : say(c, "% Physical interfaces can't be removed"),
@@ -728,7 +755,27 @@ function ifTree(): Node[] {
     kw("spanning-tree", "Spanning Tree Subsystem", { when: isSwitch, sub: [arg("line", "x", "LINE", "portfast | bpduguard enable | ...", { run: accepted })] }),
     kw("duplex", "Configure duplex operation", { sub: [arg("line", "x", "LINE", "auto | full | half", { run: accepted })] }),
     kw("speed", "Configure speed operation", { sub: [arg("line", "x", "LINE", "auto | 10 | 100 | 1000", { run: accepted })] }),
-    kw("channel-group", "Etherchannel/port bundling configuration", { sub: [arg("line", "x", "LINE", "group mode", { run: notSimulated("EtherChannel") })] }),
+    kw("channel-group", "Etherchannel/port bundling configuration", {
+      when: isSwitch,
+      sub: [
+        arg("num", "g", "<1-48>", "Channel group number", {
+          range: [1, 48],
+          sub: [
+            kw("mode", "Etherchannel Mode of the interface", {
+              sub: (
+                [
+                  ["active", "Enable LACP unconditionally"],
+                  ["passive", "Enable LACP only if a LACP device is detected"],
+                  ["desirable", "Enable PAgP unconditionally"],
+                  ["auto", "Enable PAgP only if a PAgP device is detected"],
+                  ["on", "Enable Etherchannel only"],
+                ] as const
+              ).map(([mode, help]) => kw(mode, help, { run: (c) => channelGroup(c, +c.a.g, mode) })),
+            }),
+          ],
+        }),
+      ],
+    }),
     kw("encapsulation", "Set encapsulation type for an interface", { sub: [arg("line", "x", "LINE", "dot1Q vlan", { run: notSimulated("Subinterfaces (router-on-a-stick); use an L3 switch SVI instead") })] }),
     kw("no", "Negate a command or set its defaults", {
       sub: [
@@ -757,6 +804,7 @@ function ifTree(): Node[] {
             kw("access", "Access mode", { sub: [kw("vlan", "Reset to VLAN 1", { run: (c) => switchportOnly(c, (p) => { p.vlan = 1; }) })] }),
           ],
         }),
+        kw("channel-group", "Remove the port from its channel group", { run: (c) => portOnly(c, "% Not applicable", (p) => { delete p.channel; }) }),
         kw("description", "Remove description", { run: (c) => portOnly(c, "", (p) => { delete p.description; }) }),
         kw("spanning-tree", "Spanning Tree Subsystem", { sub: [arg("line", "x", "LINE", "feature", { run: accepted })] }),
       ],

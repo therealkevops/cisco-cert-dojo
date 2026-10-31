@@ -88,6 +88,9 @@ const fixes = {
     t.devices.find((d) => d.id === "R2").ports.find((p) => p.name === "Gi0/0").ospf = { priority: 255 };
     t.devices.find((d) => d.id === "R1").ports.find((p) => p.name === "Gi0/0").ospf = { priority: 0 };
   },
+  "lacp-passive": (t) => t.devices.find((d) => d.id === "SW1").ports.forEach((p) => p.channel && (p.channel.mode = "active")),
+  "lacp-on": (t) => t.devices.find((d) => d.id === "SW1").ports.forEach((p) => p.channel && (p.channel.mode = "active")),
+  "po-access": (t) => (t.devices.find((d) => d.id === "SW2").portChannels[0].mode = "trunk"),
 };
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
@@ -122,7 +125,21 @@ const cliFixes = {
     ["R2", "en", "conf t", "int g0/0", "ip ospf priority 255", "end"],
     ["R1", "en", "conf t", "int g0/0", "ip ospf prio 0", "end"],
   ],
+  "lacp-passive": [["SW1", "en", "conf t", "int range g1/0/23 - 24", "channel-group 1 mode active", "end"]],
+  "lacp-on": [["SW1", "en", "conf t", "int range gi1/0/23-24", "no channel-group", "channel-group 1 mode active", "end"]],
+  "po-access": [["SW2", "en", "conf t", "int po1", "sw mode trunk", "end"]],
 };
+// EtherChannel example: bundle formed on both sides, and it survives losing a member.
+{
+  const ex = scenarios.find((s) => s.id === "lag");
+  const net = new Net(ex.topology);
+  if (!net.bundles.every((b) => b.formed)) fail("wire lag: Po1 not bundled in the example");
+  const t = structuredClone(ex.topology);
+  t.devices.find((d) => d.id === "SW1").ports.find((p) => p.name === "Gi1/0/23").shutdown = true;
+  const n2 = new Net(t);
+  n2.ping("PC1", "10.10.0.12", 2);
+  if (!n2.ping("PC1", "10.10.0.12", 2).probes.every((p) => p.mark === "!")) fail("wire lag: bundle did not survive a member failure");
+}
 // The OSPF example must be fully reachable with every adjacency FULL.
 {
   const ex = scenarios.find((s) => s.id === "ospf");

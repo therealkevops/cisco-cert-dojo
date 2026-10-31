@@ -20,6 +20,11 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
       const i = net.ospf().ifaces.find((x) => x.dev === goal.device && x.name === goal.iface);
       return { goal, ok: i?.state === goal.role, detail: i ? `${goal.device} ${goal.iface} is ${i.state}` : `${goal.iface} on ${goal.device} isn't running OSPF` };
     }
+    if (goal.type === "bundle") {
+      const b = net.bundles.find((x) => x.dev === goal.device && x.po === goal.po);
+      const why = b?.members.find((m) => m.why)?.why;
+      return { goal, ok: !!b?.formed, detail: !b ? `${goal.device} has no ${goal.po}` : b.formed ? `${goal.po} is up` : `${goal.po} is not bundled${why ? `: ${why}` : ""}` };
+    }
     if (goal.type === "route") {
       const r = net.routes(goal.device).find((x) => x.prefix === goal.prefix && (!goal.code || x.code === goal.code));
       return { goal, ok: !!r === goal.expect, detail: r ? `${goal.device} has ${r.code} ${r.prefix}` : `${goal.device} has no ${goal.code ?? ""} route for ${goal.prefix}`.replace("  ", " ") };
