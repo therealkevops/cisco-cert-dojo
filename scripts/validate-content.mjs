@@ -80,6 +80,14 @@ const fixes = {
     t.devices.find((d) => d.id === "PC-A").gateway = "10.10.10.1";
     t.devices.find((d) => d.id === "DSW1").svis.find((s) => s.vlan === 10).shutdown = false;
   },
+  "ospf-mtu": (t) => delete t.devices.find((d) => d.id === "R2").ports.find((p) => p.name === "Gi0/1").mtu,
+  "ospf-area": (t) => t.devices.find((d) => d.id === "R3").ospf.networks.forEach((n) => (n.area = 1)),
+  "ospf-passive": (t) => (t.devices.find((d) => d.id === "R2").ospf.noPassive = ["Gi0/0", "Gi0/1"]),
+  "ospf-summary": (t) => (t.devices.find((d) => d.id === "R2").ospf.ranges = [{ area: 1, prefix: "10.3.0.0/16" }]),
+  "ospf-dr": (t) => {
+    t.devices.find((d) => d.id === "R2").ports.find((p) => p.name === "Gi0/0").ospf = { priority: 255 };
+    t.devices.find((d) => d.id === "R1").ports.find((p) => p.name === "Gi0/0").ospf = { priority: 0 };
+  },
 };
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
@@ -106,7 +114,26 @@ const cliFixes = {
     ["PC-A", "ip 10.10.10.11/24 10.10.10.1"],
     ["DSW1", "en", "conf t", "int vlan 10", "no shut", "end"],
   ],
+  "ospf-mtu": [["R2", "en", "conf t", "int g0/1", "no ip mtu", "end"]],
+  "ospf-area": [["R3", "en", "conf t", "router ospf 1", "no network 10.0.0.0 0.255.255.255 area 0", "network 10.0.0.0 0.255.255.255 area 1", "no network 3.3.3.3 0.0.0.0 area 0", "network 3.3.3.3 0.0.0.0 area 1", "end"]],
+  "ospf-passive": [["R2", "en", "conf t", "router ospf 1", "no passive-interface g0/0", "no passive-interface gi 0/1", "end"]],
+  "ospf-summary": [["R2", "en", "conf t", "router ospf 1", "area 1 range 10.3.0.0 255.255.0.0", "end"]],
+  "ospf-dr": [
+    ["R2", "en", "conf t", "int g0/0", "ip ospf priority 255", "end"],
+    ["R1", "en", "conf t", "int g0/0", "ip ospf prio 0", "end"],
+  ],
 };
+// The OSPF example must be fully reachable with every adjacency FULL.
+{
+  const ex = scenarios.find((s) => s.id === "ospf");
+  const net = new Net(ex.topology);
+  const bad = net.ospf().nbrs.filter((n) => n.state === "EXSTART");
+  if (bad.length) fail(`wire ospf: EXSTART neighbours in the example`);
+  for (const [a, ip] of [["PC1", "10.3.1.10"], ["PC4", "10.3.0.10"], ["SRV", "10.4.4.10"], ["PC3", "10.1.1.10"]]) {
+    net.ping(a, ip, 4);
+    if (!net.ping(a, ip, 2).probes.every((p) => p.mark === "!")) fail(`wire ospf: ${a} -> ${ip} fails`);
+  }
+}
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
   let topo = structuredClone(sc.topology);

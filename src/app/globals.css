@@ -889,7 +889,7 @@ h3.display { font-size: 28px; }
 .bench-brand { font-weight: 600; text-decoration: none; white-space: nowrap; }
 .bench-brand b { color: var(--amber); font-weight: 600; }
 .bench-sep { width: 1px; height: 20px; background: var(--line); }
-.bench-title { background: none; border: 1px solid transparent; color: var(--ink-2); font: inherit; padding: 4px 6px; width: 170px; border-radius: 6px; }
+.bench-title { background: none; border: 1px solid transparent; color: var(--ink-2); font: inherit; padding: 4px 6px; width: 230px; border-radius: 6px; }
 .bench-title:hover:not(:disabled), .bench-title:focus { border-color: var(--line); outline: none; color: var(--ink); }
 .bench-title:disabled { color: var(--ink); }
 .bench-menuwrap { position: relative; }
@@ -977,6 +977,7 @@ h3.display { font-size: 28px; }
 .bench-empty .switches { pointer-events: auto; }
 
 .bench-goals {
+  z-index: 14;
   top: 66px;
   right: 12px;
   width: min(360px, calc(100vw - 24px));

@@ -12,6 +12,18 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
       const root = net.stp(goal.vlan).rootOf[goal.device];
       return { goal, ok: root === goal.device, detail: root ? `root for VLAN ${goal.vlan} is ${root}` : `no STP instance for VLAN ${goal.vlan} on ${goal.device}` };
     }
+    if (goal.type === "ospfFull") {
+      const n = net.ospf().nbrs.find((x) => x.dev === goal.device && x.nbrDev === goal.neighbor);
+      return { goal, ok: n?.state === "FULL", detail: n ? `${goal.device}↔${goal.neighbor} is ${n.state}` : `${goal.device} has no OSPF neighbour ${goal.neighbor}` };
+    }
+    if (goal.type === "ospfRole") {
+      const i = net.ospf().ifaces.find((x) => x.dev === goal.device && x.name === goal.iface);
+      return { goal, ok: i?.state === goal.role, detail: i ? `${goal.device} ${goal.iface} is ${i.state}` : `${goal.iface} on ${goal.device} isn't running OSPF` };
+    }
+    if (goal.type === "route") {
+      const r = net.routes(goal.device).find((x) => x.prefix === goal.prefix && (!goal.code || x.code === goal.code));
+      return { goal, ok: !!r === goal.expect, detail: r ? `${goal.device} has ${r.code} ${r.prefix}` : `${goal.device} has no ${goal.code ?? ""} route for ${goal.prefix}`.replace("  ", " ") };
+    }
     // Warm-up ping first, then judge on a second run, as an engineer would.
     net.ping(goal.from, goal.to, 2);
     const r = net.ping(goal.from, goal.to, 3);

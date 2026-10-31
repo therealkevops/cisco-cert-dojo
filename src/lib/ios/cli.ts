@@ -6,6 +6,11 @@ import {
   longIf,
   showAcls,
   showArp,
+  debugOspfAdj,
+  showIpProtocols,
+  showOspf,
+  showOspfIntBrief,
+  showOspfNbr,
   showCdp,
   showIntStatus,
   showIntTrunk,
@@ -118,6 +123,7 @@ const IF_TYPES: { full: string; short: string; min: number }[] = [
   { full: "gigabitethernet", short: "Gi", min: 1 },
   { full: "fastethernet", short: "Fa", min: 1 },
   { full: "vlan", short: "Vlan", min: 1 },
+  { full: "loopback", short: "Lo", min: 2 },
 ];
 
 function canonIf(raw: string): string | null {
@@ -163,9 +169,10 @@ function readArg(n: Node, tokens: string[], i: number, c: Ctx): { consumed: numb
       const ok = (name: string | null) => {
         if (!name) return false;
         if (name.startsWith("Vlan")) return /^Vlan\d+$/.test(name) && +name.slice(4) >= 1 && +name.slice(4) <= 4094 && isSwitch(c);
+        if (name.startsWith("Lo")) return /^Lo\d+$/.test(name) && +name.slice(2) <= 2147483647 && isL3(c);
         return c.dev.ports.some((p) => p.name.toLowerCase() === name.toLowerCase());
       };
-      const fix = (name: string) => (name.startsWith("Vlan") ? name : c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name);
+      const fix = (name: string) => (name.startsWith("Vlan") || name.startsWith("Lo") ? name : c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name);
       const one = canonIf(t);
       if (ok(one)) return { consumed: 1, value: fix(one!) };
       if (i + 1 < tokens.length) {
@@ -218,6 +225,15 @@ function showTree(): Node[] {
         kw("interface", "IP interface status and configuration", { sub: [kw("brief", "Brief summary of IP status and configuration", { run: (c) => say(c, showIpIntBrief(c.net, c.s.dev)) })] }),
         kw("route", "IP routing table", { when: isL3, run: (c) => say(c, showIpRoute(c.net, c.s.dev)) }),
         kw("arp", "IP ARP table", { run: (c) => say(c, showArp(c.net, c.s.dev)) }),
+        kw("ospf", "OSPF information", {
+          when: isL3,
+          run: (c) => say(c, showOspf(c.net, c.s.dev)),
+          sub: [
+            kw("neighbor", "Neighbor list", { run: (c) => say(c, showOspfNbr(c.net, c.s.dev)) }),
+            kw("interface", "Interface information", { run: (c) => say(c, showOspfIntBrief(c.net, c.s.dev)), sub: [kw("brief", "Brief summary of interface information", { run: (c) => say(c, showOspfIntBrief(c.net, c.s.dev)) })] }),
+          ],
+        }),
+        kw("protocols", "IP routing protocol process parameters and statistics", { when: isL3, run: (c) => say(c, showIpProtocols(c.net, c.s.dev)) }),
       ],
     }),
     kw("interfaces", "Interface status and configuration", {
@@ -260,9 +276,15 @@ function execTree(): Node[] {
     kw("show", "Show running system information", { sub: showTree() }),
     kw("ping", "Send echo messages", { sub: [arg("ip", "dst", "WORD", "Ping destination address", { run: (c) => pingOut(c, c.a.dst) })] }),
     kw("traceroute", "Trace route to destination", { sub: [arg("ip", "dst", "WORD", "Trace route to destination address", { run: (c) => traceOut(c, c.a.dst) })] }),
+    kw("debug", "Debugging functions", {
+      when: (c) => c.s.priv,
+      sub: [kw("ip", "IP information", { sub: [kw("ospf", "OSPF information", { sub: [kw("adj", "OSPF adjacency events", { run: (c) => say(c, debugOspfAdj(c.net, c.s.dev)) })] })] })],
+    }),
+    kw("undebug", "Disable debugging functions", { when: (c) => c.s.priv, sub: [kw("all", "Disable all debugging", { run: (c) => say(c, "All possible debugging has been turned off") })] }),
     kw("clear", "Reset functions", {
       when: (c) => c.s.priv,
       sub: [
+        kw("ip", "IP", { sub: [kw("ospf", "OSPF", { sub: [kw("process", "Reset OSPF process", { run: (c) => say(c, "Reset ALL OSPF processes? [no]: yes\n(Wire Room recomputes OSPF after every change, so this is instant.)") })] })] }),
         kw("mac", "MAC forwarding table", { when: isSwitch, sub: [kw("address-table", "MAC forwarding table", { run: (c) => c.net.macTables.delete(c.s.dev), sub: [kw("dynamic", "dynamic entries", { run: (c) => c.net.macTables.delete(c.s.dev) })] })] }),
         kw("arp-cache", "Clear the entire ARP cache", { run: (c) => c.net.arpTables.delete(c.s.dev) }),
       ],
@@ -329,7 +351,8 @@ function switchportOnly(c: Ctx, fn: (p: Device["ports"][number]) => void) {
 
 function setIp(c: Ctx, ip: string, mask: string) {
   const len = maskToLen(mask);
-  if (len === null || len === 0 || len > 31) return say(c, `% Bad mask ${mask} for address ${ip}`);
+  const loops = c.s.mode.m === "if" && c.s.mode.ifs.every((n) => n.startsWith("Lo"));
+  if (len === null || len === 0 || (len === 32 && !loops)) return say(c, `% Bad mask ${mask} for address ${ip}`);
   const host = ipToInt(ip);
   const net = (host & maskOf(len)) >>> 0;
   const bcast = (net | ~maskOf(len)) >>> 0;
@@ -424,6 +447,10 @@ function enterIfs(c: Ctx, ifs: string[]) {
     if (name.startsWith("Vlan")) {
       const vlan = +name.slice(4);
       if (!c.dev.svis?.some((s) => s.vlan === vlan)) edit(c, (d) => (d.svis = [...(d.svis ?? []), { vlan, ip: "" }]));
+    }
+    if (name.startsWith("Lo") && !c.dev.ports.some((p) => p.name === name)) {
+      edit(c, (d) => d.ports.push(d.kind === "l3switch" ? { name, mode: "routed" } : { name }));
+      say(c, `%LINEPROTO-5-UPDOWN: Line protocol on Interface ${longIf(name)}, changed state to up`);
     }
   }
   c.s.mode = { m: "if", ifs };
@@ -548,7 +575,26 @@ function configTree(): Node[] {
         }),
       ],
     }),
-    kw("router", "Enable a routing process", { sub: [arg("line", "x", "WORD", "Routing protocol", { run: notSimulated("Dynamic routing (OSPF, EIGRP, BGP)") })] }),
+    kw("router", "Enable a routing process", {
+      when: isL3,
+      sub: [
+        kw("ospf", "Open Shortest Path First (OSPF)", {
+          sub: [
+            arg("num", "pid", "<1-65535>", "Process ID", {
+              range: [1, 65535],
+              run: (c) => {
+                if (c.dev.ospf && c.dev.ospf.pid !== +c.a.pid) return say(c, `% Wire Room simulates one OSPF process per device (ospf ${c.dev.ospf.pid} already runs here).`);
+                if (!c.dev.ospf) edit(c, (d) => (d.ospf = { pid: +c.a.pid, networks: [] }));
+                c.s.mode = { m: "router" };
+              },
+            }),
+          ],
+        }),
+        kw("eigrp", "Enhanced Interior Gateway Routing Protocol (EIGRP)", { run: notSimulated("EIGRP"), sub: [arg("line", "x", "WORD", "AS number", { run: notSimulated("EIGRP") })] }),
+        kw("bgp", "Border Gateway Protocol (BGP)", { run: notSimulated("BGP"), sub: [arg("line", "x", "WORD", "AS number", { run: notSimulated("BGP") })] }),
+        kw("rip", "Routing Information Protocol (RIP)", { run: notSimulated("RIP") }),
+      ],
+    }),
     kw("line", "Configure a terminal line", { sub: [arg("line", "x", "LINE", "con 0 | vty 0 15", { run: (c) => (c.s.mode = { m: "line" }) })] }),
     kw("enable", "Modify enable password parameters", { sub: [arg("line", "x", "LINE", "secret / password", { run: accepted })] }),
     kw("username", "Establish User Name Authentication", { sub: [arg("line", "x", "LINE", "User name and options", { run: accepted })] }),
@@ -578,9 +624,19 @@ function configTree(): Node[] {
             kw("routing", "Disable IP routing", { run: notSimulated("Turning routing off on an L3 switch") }),
           ],
         }),
+        kw("router", "Disable a routing process", {
+          sub: [kw("ospf", "Open Shortest Path First (OSPF)", { sub: [arg("num", "pid", "<1-65535>", "Process ID", { range: [1, 65535], run: (c) => edit(c, (d) => { if (d.ospf?.pid === +c.a.pid) delete d.ospf; else say(c, "% OSPF process not found"); }) })] })],
+        }),
         kw("access-list", "Remove an access list", { sub: [arg("num", "n", "<1-199>", "IP access list number", { run: (c) => edit(c, (d) => { if (d.acls) delete d.acls[c.a.n]; }) })] }),
         kw("interface", "Delete a logical interface", {
-          sub: [arg("iface", "if", "<interface>", "Vlan interface", { run: (c) => (c.a.if.startsWith("Vlan") ? edit(c, (d) => (d.svis = (d.svis ?? []).filter((s) => s.vlan !== +c.a.if.slice(4)))) : say(c, "% Physical interfaces can't be removed")) })],
+          sub: [arg("iface", "if", "<interface>", "Vlan interface", {
+            run: (c) =>
+              c.a.if.startsWith("Vlan")
+                ? edit(c, (d) => (d.svis = (d.svis ?? []).filter((s) => s.vlan !== +c.a.if.slice(4))))
+                : c.a.if.startsWith("Lo")
+                  ? edit(c, (d) => (d.ports = d.ports.filter((p) => p.name !== c.a.if)))
+                  : say(c, "% Physical interfaces can't be removed"),
+          })],
         }),
         kw("spanning-tree", "Spanning Tree Subsystem", {
           when: isSwitch,
@@ -613,6 +669,8 @@ function ifTree(): Node[] {
     kw("ip", "Interface Internet Protocol config commands", {
       sub: [
         kw("address", "Set the IP address of an interface", { sub: [arg("ip", "ip", "A.B.C.D", "IP address", { sub: [arg("mask", "mask", "A.B.C.D", "IP subnet mask", { run: (c) => setIp(c, c.a.ip, c.a.mask) })] }), kw("dhcp", "IP Address negotiated via DHCP", { run: notSimulated("DHCP") })] }),
+        kw("ospf", "OSPF interface commands", { when: isL3, sub: ifOspfTree(false) }),
+        kw("mtu", "Set IP Maximum Transmission Unit", { sub: [arg("num", "mtu", "<68-9216>", "MTU (bytes)", { range: [68, 9216], run: (c) => eachIf(c, (p) => { p.mtu = +c.a.mtu === 1500 ? undefined : +c.a.mtu; }) })] }),
         kw("access-group", "Specify access control for packets", {
           sub: [
             arg("word", "acl", "WORD", "Access-list name or number", {
@@ -684,6 +742,8 @@ function ifTree(): Node[] {
         kw("ip", "Interface Internet Protocol config commands", {
           sub: [
             kw("address", "Set the IP address of an interface", { run: (c) => eachIf(c, (p, isSvi) => { if (isSvi) (p as { ip: string }).ip = ""; else delete (p as Device["ports"][number]).ip; }) }),
+            kw("ospf", "OSPF interface commands", { when: isL3, sub: ifOspfTree(true) }),
+            kw("mtu", "Reset the IP MTU", { run: (c) => eachIf(c, (p) => { delete p.mtu; }) }),
             kw("access-group", "Specify access control for packets", {
               sub: [arg("word", "acl", "WORD", "Access-list name", { sub: [kw("in", "inbound packets", { run: (c) => eachIf(c, (p) => { delete p.aclIn; }) }), kw("out", "outbound packets", { run: (c) => eachIf(c, (p) => { delete p.aclOut; }) })] })],
             }),
@@ -763,6 +823,166 @@ function simpleSubTree(exitTo: Mode["m"]): Node[] {
   ];
 }
 
+/** `ip ospf ...` under an interface; `neg` builds the `no ip ospf ...` variants. */
+function ifOspfTree(neg: boolean): Node[] {
+  const setO = (c: Ctx, fn: (o: NonNullable<Device["ports"][number]["ospf"]>) => void) =>
+    eachIf(c, (p) => {
+      p.ospf = p.ospf ?? {};
+      fn(p.ospf);
+      if (!Object.values(p.ospf).some((v) => v !== undefined)) delete p.ospf;
+    });
+  if (neg)
+    return [
+      arg("num", "pid", "<1-65535>", "Process ID", { run: (c) => setO(c, (o) => delete o.area), sub: [kw("area", "Remove the interface from its area", { run: (c) => setO(c, (o) => delete o.area), sub: [arg("word", "x", "<area>", "area", { run: (c) => setO(c, (o) => delete o.area) })] })] }),
+      kw("cost", "Reset interface cost", { run: (c) => setO(c, (o) => delete o.cost) }),
+      kw("hello-interval", "Reset hello interval", { run: (c) => setO(c, (o) => delete o.hello) }),
+      kw("dead-interval", "Reset dead interval", { run: (c) => setO(c, (o) => delete o.dead) }),
+      kw("priority", "Reset router priority", { run: (c) => setO(c, (o) => delete o.priority) }),
+      kw("network", "Reset network type", { run: (c) => setO(c, (o) => delete o.network) }),
+    ];
+  return [
+    arg("num", "pid", "<1-65535>", "Process ID", {
+      range: [1, 65535],
+      sub: [
+        kw("area", "Set the OSPF area ID", {
+          sub: [
+            arg("num", "area", "<0-4294967295>", "OSPF area ID as a decimal value", {
+              run: (c) => {
+                if (c.dev.ospf && c.dev.ospf.pid !== +c.a.pid) return say(c, `% OSPF process ${c.a.pid} does not exist here (this device runs ospf ${c.dev.ospf.pid})`);
+                if (!c.dev.ospf) edit(c, (d) => (d.ospf = { pid: +c.a.pid, networks: [] }));
+                setO(c, (o) => (o.area = +c.a.area));
+              },
+            }),
+          ],
+        }),
+      ],
+    }),
+    kw("cost", "Interface cost", { sub: [arg("num", "v", "<1-65535>", "Cost", { range: [1, 65535], run: (c) => setO(c, (o) => (o.cost = +c.a.v)) })] }),
+    kw("hello-interval", "Time between HELLO packets", { sub: [arg("num", "v", "<1-65535>", "Seconds", { range: [1, 65535], run: (c) => setO(c, (o) => (o.hello = +c.a.v)) })] }),
+    kw("dead-interval", "Interval after which a neighbor is declared dead", { sub: [arg("num", "v", "<1-65535>", "Seconds", { range: [1, 65535], run: (c) => setO(c, (o) => (o.dead = +c.a.v)) })] }),
+    kw("priority", "Router priority", { sub: [arg("num", "v", "<0-255>", "Priority (0 = never DR)", { range: [0, 255], run: (c) => setO(c, (o) => (o.priority = +c.a.v)) })] }),
+    kw("network", "Network type", {
+      sub: [
+        kw("point-to-point", "Specify OSPF point-to-point network", { run: (c) => setO(c, (o) => (o.network = "point-to-point")) }),
+        kw("broadcast", "Specify OSPF broadcast multi-access network", { run: (c) => setO(c, (o) => (o.network = "broadcast")) }),
+      ],
+    }),
+  ];
+}
+
+/** Commands under `router ospf <pid>`. */
+function ospfTree(): Node[] {
+  const o = (c: Ctx, fn: (x: NonNullable<Device["ospf"]>) => void) => edit(c, (d) => d.ospf && fn(d.ospf));
+  const wildArea = (neg: boolean) =>
+    arg("ip", "ip", "A.B.C.D", "Network number", {
+      sub: [
+        arg("mask", "wc", "A.B.C.D", "OSPF wild card bits", {
+          sub: [
+            kw("area", "Set the OSPF area ID", {
+              sub: [
+                arg("num", "area", "<0-4294967295>", "OSPF area ID as a decimal value", {
+                  run: (c) => {
+                    if (wildcardToLen(c.a.wc) === null) return say(c, "% OSPF: Invalid wildcard mask (must be contiguous, e.g. 0.0.0.255)");
+                    o(c, (x) => {
+                      const same = (n: { ip: string; wildcard: string }) => n.ip === c.a.ip && n.wildcard === c.a.wc;
+                      if (neg) {
+                        if (!x.networks.some(same)) say(c, "% OSPF: Network statement not found");
+                        x.networks = x.networks.filter((n) => !same(n));
+                      } else {
+                        const ex = x.networks.find(same);
+                        if (ex && ex.area !== +c.a.area) say(c, `% OSPF: "network ${c.a.ip} ${c.a.wc} area ${ex.area}" is already configured. Remove it before moving it to another area.`);
+                        else if (!ex) x.networks.push({ ip: c.a.ip, wildcard: c.a.wc, area: +c.a.area });
+                      }
+                    });
+                  },
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    });
+  const passive = (neg: boolean) =>
+    kw("passive-interface", "Suppress routing updates on an interface", {
+      sub: [
+        kw("default", "Suppress routing updates on all interfaces", { run: (c) => o(c, (x) => { x.passiveDefault = !neg || undefined; x.passive = []; x.noPassive = []; }) }),
+        arg("iface", "if", "<interface>", "Interface", {
+          run: (c) =>
+            o(c, (x) => {
+              const name = c.a.if;
+              const without = (l?: string[]) => (l ?? []).filter((n) => n !== name);
+              if (x.passiveDefault) x.noPassive = neg ? [...without(x.noPassive), name] : without(x.noPassive);
+              else x.passive = neg ? without(x.passive) : [...without(x.passive), name];
+            }),
+        }),
+      ],
+    });
+  const range = (neg: boolean) =>
+    kw("area", "OSPF area parameters", {
+      sub: [
+        arg("num", "area", "<0-4294967295>", "OSPF area ID as a decimal value", {
+          sub: [
+            kw("range", "Summarize routes matching address/mask (border routers only)", {
+              sub: [
+                arg("ip", "ip", "A.B.C.D", "IP address to match", {
+                  sub: [
+                    arg("mask", "mask", "A.B.C.D", "IP mask for address", {
+                      run: (c) => {
+                        const len = maskToLen(c.a.mask);
+                        if (len === null) return say(c, "% Invalid mask");
+                        const prefix = `${intToIp(parseCidr(`${c.a.ip}/${len}`)!.net)}/${len}`;
+                        o(c, (x) => {
+                          const rest = (x.ranges ?? []).filter((r) => !(r.area === +c.a.area && r.prefix === prefix));
+                          x.ranges = neg ? rest : [...rest, { area: +c.a.area, prefix }];
+                        });
+                      },
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            kw("stub", "Specify a stub area", { run: notSimulated("Stub area types") }),
+            kw("nssa", "Specify a NSSA area", { run: notSimulated("NSSA") }),
+          ],
+        }),
+      ],
+    });
+  return [
+    kw("router-id", "router-id for this OSPF process", {
+      sub: [
+        arg("ip", "rid", "A.B.C.D", "OSPF router-id in IP address format", {
+          run: (c) => {
+            o(c, (x) => (x.routerId = c.a.rid));
+            say(c, "% OSPF: Reload or use \"clear ip ospf process\" command, for this to take effect");
+          },
+        }),
+      ],
+    }),
+    kw("network", "Enable routing on an IP network", { sub: [wildArea(false)] }),
+    passive(false),
+    range(false),
+    kw("auto-cost", "Calculate OSPF interface cost according to bandwidth", {
+      sub: [kw("reference-bandwidth", "Use reference bandwidth method to assign OSPF cost", { sub: [arg("num", "bw", "<1-4294967>", "The reference bandwidth in terms of Mbits per second", { range: [1, 4294967], run: (c) => o(c, (x) => (x.refBw = +c.a.bw === 100 ? undefined : +c.a.bw)) })] })],
+    }),
+    kw("default-information", "Control distribution of default information", {
+      sub: [kw("originate", "Distribute a default route", { run: (c) => o(c, (x) => (x.defaultOriginate = "yes")), sub: [kw("always", "Always advertise default route", { run: (c) => o(c, (x) => (x.defaultOriginate = "always")) })] })],
+    }),
+    kw("no", "Negate a command or set its defaults", {
+      sub: [
+        kw("router-id", "Remove the router-id", { run: (c) => o(c, (x) => delete x.routerId) }),
+        kw("network", "Disable routing on an IP network", { sub: [wildArea(true)] }),
+        passive(true),
+        range(true),
+        kw("auto-cost", "Reset reference bandwidth", { run: (c) => o(c, (x) => delete x.refBw), sub: [kw("reference-bandwidth", "Reset reference bandwidth", { run: (c) => o(c, (x) => delete x.refBw) })] }),
+        kw("default-information", "Stop distributing a default route", { sub: [kw("originate", "Distribute a default route", { run: (c) => o(c, (x) => delete x.defaultOriginate) })] }),
+      ],
+    }),
+    kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
+    kw("exit", "Exit from routing protocol configuration mode", { run: (c) => (c.s.mode = { m: "config" }) }),
+    kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
+  ];
+}
+
 const TREES: Record<Mode["m"], Node[]> = {
   exec: execTree(),
   config: configTree(),
@@ -770,7 +990,7 @@ const TREES: Record<Mode["m"], Node[]> = {
   acl: aclTree(),
   vlan: simpleSubTree("config"),
   line: simpleSubTree("config"),
-  router: simpleSubTree("config"),
+  router: ospfTree(),
 };
 
 function runDo(c: Ctx) {
@@ -890,7 +1110,29 @@ export function runCli(line: string, s: Session, topo: Topology, net: Net): CliR
     return { out: listHelp(head.length ? w.level : root, c, !!w.node?.run && !partial, partial ? tokens[tokens.length - 1] : ""), session: s };
   }
   dispatch(c, root, line);
+  if (c.changed) c.lines.push(...adjChanges(net, new Net(c.topo), c.s.dev));
   return { out: c.lines.join("\n"), session: c.s, topo: c.changed ? c.topo : undefined, probe: c.probe, renamed: c.renamed };
+}
+
+/** %OSPF-5-ADJCHG lines for this device after a config change. */
+function adjChanges(before: Net, after: Net, dev: string): string[] {
+  const key = (n: { iface: string; nbrRid: string }) => `${n.iface}|${n.nbrRid}`;
+  const was = new Map(before.ospf().nbrs.filter((n) => n.dev === dev).map((n) => [key(n), n.state]));
+  const now = new Map(after.ospf().nbrs.filter((n) => n.dev === dev).map((n) => [key(n), n.state]));
+  const pid = after.device(dev)?.ospf?.pid ?? before.device(dev)?.ospf?.pid ?? 1;
+  const out: string[] = [];
+  for (const [k, st] of now) {
+    if (was.get(k) === st) continue;
+    const [iface, rid] = k.split("|");
+    if (st === "FULL") out.push(`%OSPF-5-ADJCHG: Process ${pid}, Nbr ${rid} on ${longIf(iface)} from LOADING to FULL, Loading Done`);
+    else if (st === "EXSTART") out.push(`%OSPF-5-ADJCHG: Process ${pid}, Nbr ${rid} on ${longIf(iface)} from INIT to EXSTART (stuck: check interface MTU)`);
+  }
+  for (const [k, st] of was) {
+    if (now.has(k) || st !== "FULL") continue;
+    const [iface, rid] = k.split("|");
+    out.push(`%OSPF-5-ADJCHG: Process ${pid}, Nbr ${rid} on ${longIf(iface)} from FULL to DOWN, Neighbor Down: ${after.ospf().problems.some((p) => p.dev === dev && p.iface === iface) ? "Dead timer expired" : "Interface down or detached"}`);
+  }
+  return out;
 }
 
 /** Tab completion: returns the completed line, or null if nothing unique matches. */

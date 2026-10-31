@@ -1000,7 +1000,7 @@ function PortPicker(props: {
   onClose: () => void;
 }) {
   const { dev, topo, q } = props;
-  const ports = dev.ports.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase().replace(/^g(i(g(a(b(i(t(e(t(h(e(r(n(e(t)?)?)?)?)?)?)?)?)?)?)?)?)?)?/, "gi")));
+  const ports = dev.ports.filter((p) => !/^Lo\d+$/.test(p.name)).filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase().replace(/^g(i(g(a(b(i(t(e(t(h(e(r(n(e(t)?)?)?)?)?)?)?)?)?)?)?)?)?)?/, "gi")));
   const groups = new Map<string, typeof ports>();
   for (const p of ports) {
     const g = p.name.startsWith("Gi") ? "GigabitEthernet" : p.name.startsWith("eth") ? "Ethernet" : "Ports";

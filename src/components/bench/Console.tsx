@@ -53,7 +53,10 @@ export function Console({ lines, prompt, history, onRun, onHelp, onComplete, onC
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "?") {
+              if (e.key === "Escape") {
+                // Hand the keyboard back to the canvas shortcuts.
+                (e.target as HTMLInputElement).blur();
+              } else if (e.key === "?") {
                 e.preventDefault();
                 onHelp(input + "?");
               } else if (e.key === "Tab") {

@@ -1,5 +1,6 @@
 import type { Ace, Device, Port, Topology } from "./types";
 import { aclAddrMatch, cidrNet, inCidr, parseCidr, type Cidr } from "./ip";
+import { computeOspf, type OspfResult } from "./ospf";
 
 // Wire Room engine: a deterministic, event-recording model of Ethernet
 // switching (VLANs, 802.1Q trunks, per-VLAN spanning tree, MAC learning),
@@ -45,7 +46,7 @@ export type L3If = {
   aclOut?: string;
 };
 
-export type RouteEntry = { code: "C" | "L" | "S"; prefix: string; cidr: Cidr; via?: string; iface?: string };
+export type RouteEntry = { code: "C" | "L" | "S" | "O" | "O IA" | "O*E2"; prefix: string; cidr: Cidr; via?: string; iface?: string; metric?: number };
 
 export type StpRole = "root" | "desig" | "alt";
 export type StpView = {
@@ -67,6 +68,7 @@ export class Net {
   private devIdx = new Map<string, number>();
   private peers = new Map<string, [string, string]>();
   private stpCache = new Map<number, StpView>();
+  private ospfCache?: OspfResult;
   macTables = new Map<string, Map<string, { port: string; vlan: number; mac: string }>>();
   arpTables = new Map<string, Map<string, { mac: string; iface: string }>>();
   private pending = new Map<string, { nextHop: string; pkt: Pkt; iface: string }[]>();
@@ -157,9 +159,10 @@ export class Net {
     return `0c${hex2(this.devIdx.get(dev)!)}.0000.0001`;
   }
 
-  /** Physical link state: both ends enabled and cabled. */
+  /** Physical link state: both ends enabled and cabled. Loopbacks are up unless shut. */
   linkUp(dev: string, port: string): boolean {
     const p = this.port(dev, port);
+    if (p && /^Lo\d+$/.test(port)) return !p.shutdown && !this.devs.get(dev)?.off;
     const peer = this.peer(dev, port);
     if (!p || !peer || p.shutdown || this.devs.get(dev)?.off || this.devs.get(peer[0])?.off) return false;
     const pp = this.port(peer[0], peer[1]);
@@ -206,7 +209,7 @@ export class Net {
     const out: RouteEntry[] = [];
     for (const i of ifs) {
       out.push({ code: "C", prefix: cidrNet(i.cidr), cidr: { ...i.cidr, ip: cidrNet(i.cidr).split("/")[0] }, iface: i.name });
-      out.push({ code: "L", prefix: `${i.cidr.ip}/32`, cidr: parseCidr(`${i.cidr.ip}/32`)!, iface: i.name });
+      if (i.cidr.len < 32) out.push({ code: "L", prefix: `${i.cidr.ip}/32`, cidr: parseCidr(`${i.cidr.ip}/32`)!, iface: i.name });
     }
     if (!this.isHost(d)) {
       for (const r of d.routes ?? []) {
@@ -217,8 +220,17 @@ export class Net {
         const shadowed = c && out.some((x) => x.code === "C" && x.cidr.net === c.net && x.cidr.len === c.len);
         if (c && egress && !shadowed) out.push({ code: "S", prefix: cidrNet(c), cidr: c, via: r.via, iface: egress.name });
       }
+      // OSPF (AD 110) only fills prefixes that connected and static routes don't already own.
+      for (const r of this.ospf().routes.get(devId) ?? []) {
+        if (!out.some((x) => x.code !== "L" && x.prefix === r.prefix)) out.push(r);
+      }
     }
     return out;
+  }
+
+  ospf(): OspfResult {
+    if (!this.ospfCache) this.ospfCache = computeOspf(this);
+    return this.ospfCache;
   }
 
   /** Where would this device send a packet for `dst`? */
@@ -247,9 +259,15 @@ export class Net {
       if (inCidr(dst, r.cidr) && (!best || r.cidr.len > best.cidr.len)) best = r;
     }
     if (!best) return { error: `no route to ${dst} in the routing table` };
+    if (best.iface === "Null0") return { error: `the longest match is OSPF summary ${best.prefix} pointing to Null0 (the discard route an ABR installs for an area range), so the packet is discarded` };
     const iface = ifs.find((i) => i.name === best!.iface)!;
     const nextHop = best.via ?? dst;
-    const label = best.code === "S" ? `static route ${best.prefix} via ${best.via}` : `connected network ${best.prefix}`;
+    const label =
+      best.code === "S"
+        ? `static route ${best.prefix} via ${best.via}`
+        : best.code === "C"
+          ? `connected network ${best.prefix}`
+          : `OSPF route ${best.code} ${best.prefix} [110/${best.metric}] via ${best.via}`;
     return { iface, nextHop, why: `longest match is ${label}, out ${iface.name}` };
   }
 

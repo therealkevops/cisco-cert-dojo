@@ -1,4 +1,5 @@
 import type { Net } from "./engine";
+import type { Device, IfOspf } from "./types";
 import { aclSpecToIos, dottedMask } from "./ip";
 
 // IOS-flavoured renderings of simulator state, so the inspector reads like a
@@ -24,16 +25,21 @@ export function showIpIntBrief(net: Net, dev: string): string {
 
 export function showIpRoute(net: Net, dev: string): string {
   const routes = net.routes(dev);
-  const head = "Codes: L - local, C - connected, S - static\n\nGateway of last resort is " + (routes.find((r) => r.prefix === "0.0.0.0/0")?.via ?? "not set") + "\n";
+  const gw = routes.find((r) => r.prefix === "0.0.0.0/0");
+  const head =
+    "Codes: L - local, C - connected, S - static, O - OSPF, IA - OSPF inter area\n       E2 - OSPF external type 2, * - candidate default\n\nGateway of last resort is " +
+    (gw?.via ? `${gw.via} to network 0.0.0.0` : "not set") +
+    "\n";
   if (!routes.length) return head + "\n(empty: no interfaces are up)";
-  const order = { S: 0, C: 1, L: 2 } as const;
+  const order: Record<string, number> = { S: 0, "O*E2": 1, O: 2, "O IA": 3, C: 4, L: 5 };
   const lines = routes
     .slice()
-    .sort((a, b) => a.cidr.net - b.cidr.net || order[a.code] - order[b.code])
+    .sort((a, b) => a.cidr.net - b.cidr.net || a.cidr.len - b.cidr.len || order[a.code] - order[b.code])
     .map((r) => {
-      const ad = r.code === "S" ? " [1/0]" : "";
-      const tail = r.via ? ` via ${r.via}` : ` is directly connected, ${r.iface}`;
-      return `${r.code}${r.prefix === "0.0.0.0/0" ? "*" : " "}    ${r.prefix}${ad}${tail}`;
+      const code = r.code === "S" && r.prefix === "0.0.0.0/0" ? "S*" : r.code;
+      const ad = r.code === "S" ? " [1/0]" : r.code.startsWith("O") && r.iface !== "Null0" ? ` [110/${r.metric}]` : "";
+      const tail = r.iface === "Null0" ? " is a summary, 00:01:12, Null0" : r.via ? ` via ${r.via}${r.code.startsWith("O") ? `, 00:01:12, ${r.iface}` : ""}` : ` is directly connected, ${r.iface}`;
+      return `${pad(code, 9)}${r.prefix}${ad}${tail}`;
     });
   return head + "\n" + lines.join("\n");
 }
@@ -142,7 +148,7 @@ export function showAcls(net: Net, dev: string): string {
   return lines.join("\n");
 }
 
-const LONG: Record<string, string> = { Gi: "GigabitEthernet", Fa: "FastEthernet", Te: "TenGigabitEthernet", Po: "Port-channel" };
+const LONG: Record<string, string> = { Gi: "GigabitEthernet", Fa: "FastEthernet", Te: "TenGigabitEthernet", Po: "Port-channel", Lo: "Loopback" };
 
 /** "Gi0/1" → "GigabitEthernet0/1". */
 export function longIf(name: string): string {
@@ -182,6 +188,7 @@ export function showRun(net: Net, dev: string): string {
     } else if (mode === "routed" && !net.isHost(d)) L.push(" no ip address");
     if (p.aclIn) L.push(` ip access-group ${p.aclIn} in`);
     if (p.aclOut) L.push(` ip access-group ${p.aclOut} out`);
+    L.push(...ifOspfLines(d, p));
     if (p.shutdown) L.push(" shutdown");
     L.push("!");
   }
@@ -190,7 +197,24 @@ export function showRun(net: Net, dev: string): string {
     L.push(`interface Vlan${s.vlan}`, s.ip ? ` ip address ${ip} ${dottedMask(Number(len))}` : " no ip address");
     if (s.aclIn) L.push(` ip access-group ${s.aclIn} in`);
     if (s.aclOut) L.push(` ip access-group ${s.aclOut} out`);
+    L.push(...ifOspfLines(d, s));
     if (s.shutdown) L.push(" shutdown");
+    L.push("!");
+  }
+  if (d.ospf) {
+    const o = d.ospf;
+    L.push(`router ospf ${o.pid}`);
+    if (o.routerId) L.push(` router-id ${o.routerId}`);
+    if (o.refBw) L.push(` auto-cost reference-bandwidth ${o.refBw}`);
+    for (const r of o.ranges ?? []) {
+      const [ip, len] = r.prefix.split("/");
+      L.push(` area ${r.area} range ${ip} ${dottedMask(Number(len))}`);
+    }
+    if (o.passiveDefault) L.push(" passive-interface default");
+    for (const x of o.passive ?? []) L.push(` passive-interface ${longIf(x)}`);
+    for (const x of o.noPassive ?? []) L.push(` no passive-interface ${longIf(x)}`);
+    for (const n of o.networks) L.push(` network ${n.ip} ${n.wildcard} area ${n.area}`);
+    if (o.defaultOriginate) L.push(` default-information originate${o.defaultOriginate === "always" ? " always" : ""}`);
     L.push("!");
   }
   for (const r of d.routes ?? []) {
@@ -265,4 +289,88 @@ export function showVersion(net: Net, dev: string): string {
     "Simulated: VLANs, 802.1Q, RSTP, ARP, static routing, extended ACLs, ICMP.",
     "Not simulated yet: dynamic routing protocols, EtherChannel, NAT, subinterfaces.",
   ].join("\n");
+}
+
+function ifOspfLines(d: Device, p: { mtu?: number; ospf?: IfOspf }): string[] {
+  const out: string[] = [];
+  if (p.mtu && p.mtu !== 1500) out.push(` ip mtu ${p.mtu}`);
+  const o = p.ospf;
+  if (!o) return out;
+  if (o.area !== undefined) out.push(` ip ospf ${d.ospf?.pid ?? 1} area ${o.area}`);
+  if (o.network) out.push(` ip ospf network ${o.network}`);
+  if (o.cost !== undefined) out.push(` ip ospf cost ${o.cost}`);
+  if (o.priority !== undefined) out.push(` ip ospf priority ${o.priority}`);
+  if (o.hello !== undefined) out.push(` ip ospf hello-interval ${o.hello}`);
+  if (o.dead !== undefined) out.push(` ip ospf dead-interval ${o.dead}`);
+  return out;
+}
+
+// --- OSPF --------------------------------------------------------------------------
+
+const noOspf = (net: Net, dev: string) => !net.device(dev).ospf;
+
+export function showOspfNbr(net: Net, dev: string): string {
+  if (noOspf(net, dev)) return "";
+  const rows = ["", "Neighbor ID     Pri   State           Dead Time   Address         Interface"];
+  for (const n of net.ospf().nbrs.filter((x) => x.dev === dev)) {
+    const state = `${n.state}/${n.role === "-" ? " -" : n.role}`;
+    rows.push(`${pad(n.nbrRid, 16)}${pad(n.nbrPri, 6)}${pad(state, 16)}${pad("00:00:3" + (n.nbrRid.length % 10), 12)}${pad(n.nbrIp, 16)}${longIf(n.iface)}`);
+  }
+  return rows.join("\n");
+}
+
+export function showOspfIntBrief(net: Net, dev: string): string {
+  if (noOspf(net, dev)) return "";
+  const rows = ["Interface    PID   Area            IP Address/Mask    Cost  State Nbrs F/C"];
+  const pid = net.device(dev).ospf!.pid;
+  for (const i of net.ospf().ifaces.filter((x) => x.dev === dev)) {
+    const state = i.passive && !i.loopback ? (i.state === "WAIT" ? "DR" : i.state) : i.state;
+    rows.push(`${pad(i.name, 13)}${pad(pid, 6)}${pad(i.area, 16)}${pad(`${i.ip}/${i.cidr.len}`, 19)}${pad(i.cost, 6)}${pad(state, 6)}${i.full}/${i.seen}`);
+  }
+  return rows.join("\n");
+}
+
+export function showOspf(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.ospf) return "%OSPF: Router process not running";
+  const o = net.ospf();
+  const rid = o.rid.get(dev);
+  const mine = o.ifaces.filter((x) => x.dev === dev);
+  const areas = [...new Set(mine.map((x) => x.area))].sort((a, b) => a - b);
+  const L = [` Routing Process "ospf ${d.ospf.pid}" with ID ${rid ?? "0.0.0.0 (no router ID: configure one or add an IP address)"}`];
+  if (o.abr.has(dev)) L.push(" It is an area border router");
+  if (o.asbr.has(dev)) L.push(" It is an autonomous system boundary router");
+  L.push(` Reference bandwidth unit is ${d.ospf.refBw ?? 100} mbps`, ` Number of areas in this router is ${areas.length}. ${areas.length} normal 0 stub 0 nssa`);
+  for (const a of areas) {
+    const ifs = mine.filter((x) => x.area === a);
+    L.push(`    Area ${a === 0 ? "BACKBONE(0)" : a}`, `        Number of interfaces in this area is ${ifs.length} (${ifs.filter((x) => x.loopback).length} loopback)`);
+    for (const r of (d.ospf.ranges ?? []).filter((x) => x.area === a)) L.push(`        Area ranges are`, `           ${r.prefix} Active(${1}) Advertise`);
+  }
+  return L.join("\n");
+}
+
+export function showIpProtocols(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.ospf) return '*** IP Routing is NSF aware ***\n\n(no dynamic routing protocol is configured)';
+  const o = d.ospf;
+  const passive = net.ospf().ifaces.filter((x) => x.dev === dev && x.passive && !x.loopback).map((x) => x.name);
+  return [
+    `Routing Protocol is "ospf ${o.pid}"`,
+    `  Router ID ${net.ospf().rid.get(dev) ?? "none"}`,
+    `  Maximum path: 4`,
+    `  Routing for Networks:`,
+    ...o.networks.map((n) => `    ${n.ip} ${n.wildcard} area ${n.area}`),
+    ...(passive.length ? [`  Passive Interface(s):`, ...passive.map((x) => `    ${longIf(x)}`)] : []),
+    `  Distance: (default is 110)`,
+  ].join("\n");
+}
+
+/** What `debug ip ospf adj` would have been printing about this router's failed adjacencies. */
+export function debugOspfAdj(net: Net, dev: string): string {
+  if (noOspf(net, dev)) return "OSPF adjacency debugging is on\n(no OSPF process on this device)";
+  const probs = net.ospf().problems.filter((p) => p.dev === dev);
+  const lines = ["OSPF adjacency debugging is on"];
+  if (!probs.length) lines.push("(no adjacency errors: every OSPF neighbour that is reachable passes the hello checks)");
+  for (const p of probs) lines.push(`*Oct 31 10:0${lines.length}:12: OSPF-1 ADJ   ${p.iface}: ${p.text}`);
+  return lines.join("\n");
 }
