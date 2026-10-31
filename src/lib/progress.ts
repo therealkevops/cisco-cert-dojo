@@ -29,11 +29,12 @@ export type Progress = {
   labs: Record<string, { at: number; slips: number }>;
   mocks: MockResult[];
   read: Record<string, number>; // `${exam}:${objective}` -> epoch ms
+  wire: Record<string, { at: number }>; // solved Wire Room challenges
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -111,6 +112,12 @@ export function recordLab(labId: string, slips: number) {
   const prev = p.labs[labId];
   const best = prev ? Math.min(prev.slips, slips) : slips;
   save({ ...p, labs: { ...p.labs, [labId]: { at: Date.now(), slips: best } }, days: touchDay(p) });
+}
+
+export function recordWire(scenarioId: string) {
+  const p = load();
+  if (p.wire[scenarioId]) return;
+  save({ ...p, wire: { ...p.wire, [scenarioId]: { at: Date.now() } }, days: touchDay(p) });
 }
 
 export function recordMock(result: MockResult) {

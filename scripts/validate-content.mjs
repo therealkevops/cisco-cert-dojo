@@ -6,6 +6,9 @@ import { exams } from "../src/data/catalog.ts";
 import { labs } from "../src/data/labs.ts";
 import { matchAny } from "../src/lib/cli-pattern.ts";
 import { initialState, runLine } from "../src/lib/terminal.ts";
+import { scenarios, campus } from "../src/data/wire.ts";
+import { gradeGoals } from "../src/lib/net/grade.ts";
+import { Net } from "../src/lib/net/engine.ts";
 
 const errors = [];
 const fail = (m) => errors.push(m);
@@ -51,6 +54,47 @@ for (const lab of labs) {
   }
 }
 console.log(`labs   ${labs.length}`);
+
+// Wire Room: the healthy campus must be fully reachable, every challenge must
+// start broken, and the intended fix must pass.
+{
+  const net = new Net(campus());
+  const hosts = ["PC-A", "PC-B", "PC-C", "SRV"];
+  const ips = { "PC-A": "10.10.10.11", "PC-B": "10.20.20.12", "PC-C": "10.30.30.13", SRV: "192.0.2.10" };
+  for (const a of hosts)
+    for (const b of hosts) {
+      if (a === b) continue;
+      net.ping(a, ips[b], 3);
+      const r = net.ping(a, ips[b], 2);
+      if (!r.probes.every((p) => p.mark === "!")) fail(`wire campus: ${a} -> ${b} failed (${r.probes.map((p) => p.mark).join("")})`);
+    }
+}
+const fixes = {
+  "wrong-vlan": (t) => (t.devices.find((d) => d.id === "ASW2").ports.find((p) => p.name === "Gi1/0/2").vlan = 20),
+  "pruned-trunk": (t) => (t.devices.find((d) => d.id === "ASW2").ports.find((p) => p.name === "Gi1/0/1").allowed = [10, 20, 30]),
+  "return-route": (t) => t.devices.find((d) => d.id === "R1").routes.push({ prefix: "10.20.20.0/24", via: "10.0.0.1" }),
+  "acl-guest": (t) => (t.devices.find((d) => d.id === "R1").acls.EDGE[0].src = "10.30.30.0/24"),
+  "stp-root": (t) => (t.devices.find((d) => d.id === "DSW1").stpPriority = 4096 - 4096),
+  "dead-gateway": (t) => {
+    t.devices.find((d) => d.id === "PC-A").gateway = "10.10.10.1";
+    t.devices.find((d) => d.id === "DSW1").svis.find((s) => s.vlan === 10).shutdown = false;
+  },
+};
+for (const sc of scenarios) {
+  if (sc.kind !== "challenge") continue;
+  const before = gradeGoals(sc.topology, sc.goals);
+  if (before.every((g) => g.ok)) fail(`wire ${sc.id}: already solved before any fix`);
+  const fix = fixes[sc.id];
+  if (!fix) {
+    fail(`wire ${sc.id}: no reference fix in validator`);
+    continue;
+  }
+  const t = structuredClone(sc.topology);
+  fix(t);
+  const after = gradeGoals(t, sc.goals);
+  for (const g of after) if (!g.ok) fail(`wire ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+}
+console.log(`wire   ${scenarios.length} scenarios`);
 
 if (errors.length) {
   console.error("\n" + errors.map((e) => "✗ " + e).join("\n"));

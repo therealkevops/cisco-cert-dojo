@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { examList } from "@/data/catalog";
 import { labs } from "@/data/labs";
+import { scenarios } from "@/data/wire";
 
 type Cmd = { name: string; help: string; run: () => void };
 
@@ -22,12 +23,14 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
     const list: Cmd[] = [
       { name: "rack", help: "home: every chassis and its port lights", run: go("/") },
       { name: "labs", help: "list all CLI labs", run: go("/labs") },
+      { name: "wire", help: "topology simulator: ping, traceroute, packet walk", run: go("/wire") },
     ];
     for (const e of examList) {
       list.push({ name: `study ${e.id}`, help: `${e.short} ${e.code} blueprint and field notes`, run: go(`/exam/${e.id}`) });
       list.push({ name: `kata ${e.id}`, help: `${e.short}: spaced-repetition drill`, run: go(`/exam/${e.id}/kata`) });
       list.push({ name: `mock ${e.id}`, help: `${e.short}: timed mock exam`, run: go(`/exam/${e.id}/mock`) });
     }
+    for (const s of scenarios) list.push({ name: `wire ${s.id}`, help: s.title, run: go(`/wire/${s.id}`) });
     for (const l of labs) list.push({ name: `lab ${l.id}`, help: l.title, run: go(`/labs/${l.id}`) });
     list.push({
       name: "theme",

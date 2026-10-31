@@ -75,6 +75,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <span className="num" title="Cards due for review across all exams">
             due <span style={{ color: due ? "var(--amber)" : undefined }}>{due}</span>
           </span>
+          <Link href="/wire" className="hide-sm">
+            wire
+          </Link>
           <Link href="/labs" className="hide-sm">
             labs
           </Link>

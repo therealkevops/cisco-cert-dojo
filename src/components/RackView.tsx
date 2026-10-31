@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef } from "react";
 import { exams, tracks } from "@/data/catalog";
 import { labs } from "@/data/labs";
+import { scenarios } from "@/data/wire";
 import { exportProgress, importProgress, resetProgress, streak, useProgress } from "@/lib/progress";
 import { Chassis } from "./Chassis";
 
@@ -96,6 +97,23 @@ export function RackView() {
           <span className="silk">{t.level} · slot reserved</span>
         </div>
       ))}
+
+      <div className="section-head">
+        <h3 className="display">Wire room</h3>
+        <Link href="/wire" className="sw">
+          Open simulator →
+        </Link>
+      </div>
+      <Link href="/wire/campus" className="blank" style={{ textDecoration: "none", borderStyle: "solid" }}>
+        <b>Topology simulator</b>
+        <p>
+          Drag one device onto another to ping it. The path lights up on the map, and every ARP, MAC lookup, spanning-tree block and routing
+          decision is explained. Includes {scenarios.filter((s) => s.kind === "challenge").length} troubleshooting challenges.
+        </p>
+        <span className="silk">
+          {Object.keys(p.wire).length} solved · open sandbox →
+        </span>
+      </Link>
 
       <div className="section-head">
         <h3 className="display">Patch tickets</h3>
