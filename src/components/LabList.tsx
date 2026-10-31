@@ -11,14 +11,16 @@ export function LabList() {
     <main className="page">
       <section className="hero">
         <div>
-          <span className="silk">Console labs</span>
+          <span className="silk">Config drills</span>
           <h1 className="display">
             Patch <em>tickets.</em>
           </h1>
           <p className="lede">
-            Each lab is a change ticket on a simulated IOS XE or NX-OS console. Type the configuration the way you would on a real box
-            (abbreviations work). The sensei flags wrong-mode commands and steps taken out of order. Type <span className="inline-code">?</span>{" "}
-            whenever you are stuck.
+            Guided, step-by-step change tickets on a simulated IOS XE or NX-OS console, for features the{" "}
+            <Link href="/wire/challenges">Wire Room</Link> doesn&apos;t simulate yet (HSRP, VRF-lite, IP SLA, EEM, AAA, NX-OS PFC/ECN) and for
+            drilling exact syntax. Type the configuration the way you would on a real box (abbreviations work). The sensei flags wrong-mode
+            commands and steps taken out of order. Type <span className="inline-code">?</span> whenever you are stuck. Each closed ticket counts
+            toward its objective&apos;s mastery.
           </p>
         </div>
       </section>

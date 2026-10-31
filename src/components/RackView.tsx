@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef } from "react";
 import { exams, tracks } from "@/data/catalog";
 import { labs } from "@/data/labs";
+import { practicals } from "@/data/practice";
 import { scenarios } from "@/data/wire";
 import { exportProgress, importProgress, resetProgress, streak, useProgress } from "@/lib/progress";
 import { Chassis } from "./Chassis";
@@ -15,6 +16,8 @@ export function RackView() {
   const planned = tracks.filter((t) => t.status === "planned");
   const answered = Object.keys(p.cards).length;
   const labsDone = Object.keys(p.labs).length;
+  const wireDone = practicals.filter((x) => x.kind === "wire" && p.wire[x.id]).length;
+  const wireTotal = practicals.filter((x) => x.kind === "wire").length;
   const lastMock = p.mocks[p.mocks.length - 1];
 
   const download = () => {
@@ -47,7 +50,7 @@ export function RackView() {
             <b>cards</b> {answered} answered
           </span>
           <span>
-            <b>labs</b> {labsDone}/{labs.length} tickets closed
+            <b>hands-on</b> {labsDone + wireDone}/{labs.length + wireTotal} done
           </span>
           <span>
             <b>last mock</b>{" "}
@@ -117,9 +120,9 @@ export function RackView() {
       </Link>
 
       <div className="section-head">
-        <h3 className="display">Patch tickets</h3>
+        <h3 className="display">Config drills</h3>
         <Link href="/labs" className="sw">
-          All labs →
+          All drills →
         </Link>
       </div>
       <div className="lab-list">

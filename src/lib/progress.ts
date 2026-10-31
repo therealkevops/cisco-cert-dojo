@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { practicalsFor, type Practical } from "@/data/practice";
 import type { Exam } from "@/data/types";
 
 // All progress lives in localStorage under one key. No accounts, no server:
@@ -148,11 +149,25 @@ export function resetProgress() {
 
 // --- derived ----------------------------------------------------------------
 
-/** 0..1 mastery for one objective: mean Leitner box of its questions. Unseen counts as 0. */
+/** A hands-on fix is stronger evidence than one recalled answer, so each counts as this many questions. */
+export const PRACTICAL_WEIGHT = 2;
+
+export function practicalDone(p: Progress, x: Practical): boolean {
+  return x.kind === "wire" ? !!p.wire[x.id] : !!p.labs[x.id];
+}
+
+/**
+ * 0..1 mastery for one objective: the mean Leitner box of its questions (unseen counts as 0), with each
+ * Wire Room challenge or config drill for the objective counted as PRACTICAL_WEIGHT items at the top box
+ * once solved and at 0 until then.
+ */
 export function objectiveMastery(p: Progress, exam: Exam, objectiveId: string): number {
   const qs = exam.questions.filter((q) => q.objective === objectiveId);
-  if (!qs.length) return 0;
-  return qs.reduce((s, q) => s + (p.cards[q.id]?.box ?? 0), 0) / (qs.length * 5);
+  const ps = practicalsFor(exam.id, objectiveId);
+  const items = qs.length + ps.length * PRACTICAL_WEIGHT;
+  if (!items) return 0;
+  const score = qs.reduce((s, q) => s + (p.cards[q.id]?.box ?? 0), 0) + ps.filter((x) => practicalDone(p, x)).length * PRACTICAL_WEIGHT * 5;
+  return score / (items * 5);
 }
 
 export function domainMastery(p: Progress, exam: Exam, domainId: string): number {

@@ -22,7 +22,8 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
     };
     const list: Cmd[] = [
       { name: "rack", help: "home: every chassis and its port lights", run: go("/") },
-      { name: "labs", help: "list all CLI labs", run: go("/labs") },
+      { name: "labs", help: "list all config drills", run: go("/labs") },
+      { name: "drills", help: "list all config drills", run: go("/labs") },
       { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
       { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
     ];

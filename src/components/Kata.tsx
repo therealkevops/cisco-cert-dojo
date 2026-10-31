@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { exams, objectiveIndex } from "@/data/catalog";
+import { practicalsFor } from "@/data/practice";
 import type { Exam, Question } from "@/data/types";
-import { getProgress, recordAnswer, type Progress } from "@/lib/progress";
+import { getProgress, practicalDone, recordAnswer, useProgress, type Progress } from "@/lib/progress";
 import { emptyResponse, grade, isAnswered, shuffled, type Response } from "@/lib/quiz";
 import { QuestionCard } from "./QuestionCard";
 import { Rich } from "./Rich";
@@ -31,6 +32,7 @@ function buildQueue(exam: Exam, p: Progress, objective: string | null, seed: str
 export function Kata({ examId }: { examId: string }) {
   const exam = exams[examId];
   const params = useSearchParams();
+  const prog = useProgress();
   const objective = params.get("o");
   const index = useMemo(() => objectiveIndex(exam), [exam]);
   const [seed] = useState(() => Math.random().toString(36).slice(2));
@@ -159,6 +161,20 @@ export function Kata({ examId }: { examId: string }) {
             <div className="verdict" aria-live="polite">
               <span className={`tag ${ok ? "ok" : "bad"}`}>{ok ? "CORRECT" : "MISS"}</span>
               <Rich text={q.explain} />
+              {!ok && practicalsFor(exam.id, q.objective).length > 0 && (
+                <p className="verdict-hands">
+                  Try it hands-on:{" "}
+                  {practicalsFor(exam.id, q.objective)
+                    .sort((x, y) => Number(practicalDone(prog, x)) - Number(practicalDone(prog, y)))
+                    .slice(0, 3)
+                    .map((x, n) => (
+                      <span key={x.id}>
+                        {n > 0 && " · "}
+                        <Link href={x.href}>{x.title}</Link>
+                      </span>
+                    ))}
+                </p>
+              )}
             </div>
           )}
           <div className="ticket-foot">

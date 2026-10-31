@@ -8,6 +8,7 @@ import { matchAny } from "../src/lib/cli-pattern.ts";
 import { initialState, runLine } from "../src/lib/terminal.ts";
 import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
+import { practicals } from "../src/data/practice.ts";
 import { Net } from "../src/lib/net/engine.ts";
 import { newSession, runCli } from "../src/lib/ios/cli.ts";
 
@@ -218,6 +219,13 @@ for (const sc of scenarios) {
   for (const g of gradeGoals(topo, sc.goals)) if (!g.ok) fail(`wire ${sc.id}: CLI fix fails "${g.goal.label}" (${g.detail})`);
 }
 console.log(`wire   ${scenarios.length} scenarios (data + CLI fixes)`);
+// Every hands-on item must land on a real blueprint objective, or it would silently never count toward mastery.
+for (const x of practicals) {
+  const exam = exams[x.exam];
+  if (!exam) fail(`practical ${x.id}: unknown exam ${x.exam}`);
+  else if (!exam.domains.some((d) => d.objectives.some((o) => o.id === x.objective))) fail(`practical ${x.id}: ${x.exam} has no objective ${x.objective}`);
+}
+console.log(`hands-on ${practicals.length} items mapped to objectives`);
 
 if (errors.length) {
   console.error("\n" + errors.map((e) => "✗ " + e).join("\n"));

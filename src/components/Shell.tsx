@@ -89,7 +89,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             wire
           </Link>
           <Link href="/labs" className="hide-sm">
-            labs
+            drills
           </Link>
           <button onClick={toggle} aria-label="Toggle colour theme">
             {theme === "light" ? "◐ datasheet" : "◑ rackroom"}

@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 import { exams, objectiveIndex } from "@/data/catalog";
-import { labs } from "@/data/labs";
-import { domainMastery, markRead, objectiveMastery, readiness, useProgress } from "@/lib/progress";
+import { practicalsFor } from "@/data/practice";
+import { domainMastery, markRead, objectiveMastery, practicalDone, readiness, useProgress } from "@/lib/progress";
 import { Rich } from "./Rich";
 
 function Meter({ value }: { value: number }) {
@@ -29,7 +29,7 @@ export function Blueprint({ examId }: { examId: string }) {
   const selected = params.get("o") && index.has(params.get("o")!) ? params.get("o")! : firstId;
   const { objective, domain } = index.get(selected)!;
   const qCount = exam.questions.filter((q) => q.objective === selected).length;
-  const objLabs = labs.filter((l) => l.exam === exam.id && l.objective === selected);
+  const hands = practicalsFor(exam.id, selected);
 
   useEffect(() => {
     // Opening the notes for a few seconds counts as having read them.
@@ -147,12 +147,25 @@ export function Blueprint({ examId }: { examId: string }) {
             <Link className="sw primary" href={`/exam/${exam.id}/kata?o=${objective.id}`}>
               Drill {objective.id} · {qCount}q
             </Link>
-            {objLabs.map((l) => (
-              <Link key={l.id} className="sw" href={`/labs/${l.id}`}>
-                Lab: {l.title}
-              </Link>
-            ))}
           </div>
+          {hands.length > 0 && (
+            <div className="hands">
+              <span className="silk">
+                Hands-on · {hands.filter((x) => practicalDone(p, x)).length}/{hands.length} done · each counts toward this objective&apos;s mastery
+              </span>
+              <ul>
+                {hands.map((x) => (
+                  <li key={x.id}>
+                    <Link href={x.href}>
+                      <span className="silk">{x.kind === "wire" ? "Wire Room" : "Config drill"}</span>
+                      <span className="t">{x.title}</span>
+                      <span className={`state ${practicalDone(p, x) ? "done" : ""}`}>{practicalDone(p, x) ? "done ✓" : "open →"}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </article>
       </div>
     </main>
