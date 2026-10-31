@@ -1,9 +1,11 @@
 import type { Exam } from "../types";
 import { dcaiBankA } from "./dcai-bank-a";
 import { dcaiBankB } from "./dcai-bank-b";
+import { dcaiBankC } from "./dcai-bank-c";
+import { dcaiBankD } from "./dcai-bank-d";
 
 // Blueprint: Implementing Cisco Data Center AI Infrastructure v1.0 (300-640 DCAI).
-// Released February 2026. Counts toward CCNP Data Center (with 350-601 DCCOR) and the
+// Exam topics document dated 2025-11-05. Counts toward CCNP Data Center (with 350-601 DCCOR) and the
 // Cisco Certified Specialist – Data Center AI Infrastructure.
 
 export const dcai: Exam = {
@@ -15,7 +17,7 @@ export const dcai: Exam = {
   minutes: 90,
   approxItems: 60,
   role: "concentration",
-  blueprintUrl: "https://learningnetwork.cisco.com/s/dcai-exam-topics",
+  blueprintUrl: "https://learningcontent.cisco.com/documents/marketing/exam-topics/300-640-DCAI-v1.0_2025Nov5.pdf",
   domains: [
     {
       id: "1.0",
@@ -38,18 +40,36 @@ export const dcai: Exam = {
         },
         {
           id: "1.2",
-          title: "AI lifecycle and use cases",
+          title: "The AI lifecycle",
           brief:
-            "The lifecycle runs from data to production: collect and prepare data, train or fine-tune, validate, deploy for inference, then monitor and retrain as data drifts.",
+            "The lifecycle runs from data to production: collect and prepare data, train or fine-tune, validate, deploy for inference, then monitor and retrain as data drifts. Each stage loads a different part of the infrastructure.",
           keys: [
             "Data ingestion → preparation and labelling → training → evaluation → deployment (inference) → monitoring → retraining.",
-            "Data preparation often takes most of the project's time. Storage throughput matters here.",
-            "MLOps applies CI/CD ideas to models: versioning, reproducibility, automated deployment.",
-            "Use cases: predictive maintenance, fraud detection, computer vision, conversational assistants, network operations (AIOps).",
+            "Data preparation often takes most of the project's time. Storage throughput and CPU matter here more than GPUs.",
+            "Training and fine-tuning are GPU- and fabric-bound. Checkpoints are written periodically so a failure only loses the work since the last one.",
+            "Deployment: the model is packaged (often in a container), optimised (quantisation, batching) and served behind an API.",
+            "Monitoring watches accuracy, latency and data drift. Drift triggers retraining, so the lifecycle is a loop, not a line.",
+            "MLOps applies CI/CD ideas to models: versioning of data and models, reproducibility, automated testing and deployment.",
           ],
+          trap: "The lifecycle doesn't end at deployment. Model drift makes monitoring and retraining part of normal operations.",
         },
         {
           id: "1.3",
+          title: "AI use cases",
+          brief:
+            "Use cases map to workload types and so to infrastructure: some need large training clusters, most need inference capacity close to users or data, and many combine an LLM with enterprise data through RAG.",
+          keys: [
+            "Generative AI assistants and chatbots: LLM inference, usually with RAG over company documents.",
+            "Computer vision: quality inspection, safety, retail analytics. Often edge inference next to the cameras.",
+            "Predictive analytics: predictive maintenance from sensor data, demand forecasting, fraud and anomaly detection on transactions.",
+            "Healthcare and science: medical imaging, drug discovery, genomics. Large training workloads with strict data residency.",
+            "IT and network operations (AIOps): anomaly detection, log correlation and root-cause suggestions, as in Cisco's AI assistants and AI Canvas.",
+            "Code generation, summarisation, translation and content creation: generative inference at scale.",
+          ],
+          trap: "Most enterprises consume or fine-tune foundation models. Few train a large model from scratch, so inference and RAG capacity usually matter more than a huge training cluster.",
+        },
+        {
+          id: "1.4",
           title: "Infrastructure types: cloud, hybrid, on-prem, edge",
           brief:
             "Where AI runs depends on data gravity, cost, latency and sovereignty. Many organisations train in one place and run inference in another.",
@@ -62,7 +82,7 @@ export const dcai: Exam = {
           trap: "Data gravity: large datasets are expensive and slow to move, so compute often moves to the data.",
         },
         {
-          id: "1.4",
+          id: "1.5",
           title: "Environment components: network, GPU, containers, orchestration, storage",
           brief:
             "An AI cluster has separate networks for different jobs, GPU servers with fast internal interconnects, container orchestration, monitoring, and a storage tier sized for data loading and checkpoints.",
@@ -72,12 +92,13 @@ export const dcai: Exam = {
             "NVLink/NVSwitch: high-bandwidth GPU-to-GPU links inside a server (scale-up). PCIe connects GPUs to CPUs and NICs.",
             "Containers (Docker) package models and dependencies. Kubernetes orchestrates them, and the GPU operator exposes GPUs to pods.",
             "Slurm is the common HPC scheduler for batch training jobs.",
+            "Monitoring spans layers: GPU telemetry (NVIDIA DCGM), fabric telemetry (Nexus Dashboard), server health (Intersight), plus Prometheus/Grafana for the cluster.",
             "Storage: block (SAN, FC, NVMe-oF) for low latency, file (NFS, parallel file systems) for shared datasets, object (S3) for data lakes. NVMe gives high IOPS with low latency.",
           ],
           trap: "NVLink is the scale-up interconnect inside a server (or rack). The Ethernet back-end fabric is scale-out between servers.",
         },
         {
-          id: "1.5",
+          id: "1.6",
           title: "Cisco AI solutions: AI PODs, AI Canvas, Hyperfabric AI",
           brief:
             "Cisco packages AI infrastructure as validated building blocks. AI PODs bundle compute, network and storage. Hyperfabric AI is a cloud-managed fabric. AI Canvas is a generative AI workspace for operations.",
@@ -171,7 +192,7 @@ export const dcai: Exam = {
       weight: 30,
       objectives: [
         {
-          id: "3.1.1",
+          id: "3.1.a",
           title: "Congestion control: PFC, ECN, ETS",
           brief:
             "RoCEv2 needs a lossless fabric. PFC pauses a single priority instead of the whole link. ECN marks packets so senders slow down before buffers fill. ETS shares bandwidth between traffic classes.",
@@ -193,7 +214,7 @@ interface Ethernet1/1
           trap: "PFC is hop by hop (Layer 2 pause). ECN is end to end (marking plus sender rate reduction).",
         },
         {
-          id: "3.1.2",
+          id: "3.1.b",
           title: "RoCE and RoCEv2",
           brief:
             "RDMA over Converged Ethernet lets a NIC write directly into remote memory with very low CPU use and low latency. RoCEv2 runs over UDP/IP, so it can be routed across a Layer 3 fabric.",
@@ -207,7 +228,7 @@ interface Ethernet1/1
           trap: "RoCEv2 uses UDP 4791. VXLAN uses UDP 4789. Easy to mix up.",
         },
         {
-          id: "3.1.3",
+          id: "3.1.c",
           title: "QoS for AI fabrics",
           brief:
             "AI fabrics map RoCE traffic into a no-drop class, CNPs into a strict-priority class, and everything else into lossy classes. On NX-OS that means configuring three policy types consistently.",
@@ -227,7 +248,7 @@ interface Ethernet1/1
           trap: "On NX-OS, MTU and PFC no-drop live in the network-qos policy, not in the interface queuing policy.",
         },
         {
-          id: "3.1.4",
+          id: "3.1.d",
           title: "Load distribution",
           brief:
             "Static ECMP hashes each flow onto one path, and AI traffic has few very large flows. Hash collisions leave links idle or overloaded. Newer techniques spread load more evenly.",
@@ -342,6 +363,8 @@ show policy-map system type network-qos`,
   questions: [
     ...dcaiBankA,
     ...dcaiBankB,
+    ...dcaiBankC,
+    ...dcaiBankD,
     // 1.x
     {
       id: "d-001",
@@ -371,7 +394,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-004",
-      objective: "1.3",
+      objective: "1.4",
       kind: "single",
       prompt: "A factory needs millisecond-level computer vision decisions on the production line with limited WAN bandwidth. Where should inference run?",
       choices: ["Public cloud region", "Central on-prem data centre", "Edge", "Hybrid burst"],
@@ -380,7 +403,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-005",
-      objective: "1.4",
+      objective: "1.5",
       kind: "single",
       prompt: "Which technology provides the high-bandwidth GPU-to-GPU interconnect inside a single server?",
       choices: ["RoCEv2", "NVLink / NVSwitch", "PCIe Gen3", "Fibre Channel"],
@@ -389,7 +412,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-006",
-      objective: "1.4",
+      objective: "1.5",
       kind: "multi",
       prompt: "Which TWO storage types offer block-level access?",
       choices: ["Fibre Channel SAN", "NVMe over Fabrics", "NFS", "S3 object storage", "SMB"],
@@ -398,7 +421,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-007",
-      objective: "1.4",
+      objective: "1.5",
       kind: "single",
       prompt: "In an AI cluster, which network carries GPU-to-GPU RDMA traffic between servers?",
       choices: ["Front-end network", "Out-of-band management", "Back-end (scale-out) network", "Storage replication link"],
@@ -407,7 +430,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-008",
-      objective: "1.5",
+      objective: "1.6",
       kind: "single",
       prompt: "What is a Cisco AI POD?",
       choices: ["A GPU model", "A pre-validated stack of compute, networking, storage and software for AI workloads", "A SaaS chatbot", "A rack PDU"],
@@ -416,7 +439,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-009",
-      objective: "1.5",
+      objective: "1.6",
       kind: "single",
       prompt: "Which Cisco offering provides cloud-managed design, deployment and operation of AI fabrics?",
       choices: ["APIC", "Hyperfabric AI", "Catalyst Center", "Secure Firewall"],
@@ -515,7 +538,7 @@ show policy-map system type network-qos`,
     // 3.x
     {
       id: "d-019",
-      objective: "3.1.1",
+      objective: "3.1.a",
       kind: "single",
       prompt: "How does PFC differ from traditional 802.3x PAUSE?",
       choices: ["PFC pauses the entire link", "PFC pauses only a specific priority (CoS) and leaves the others flowing", "PFC works end to end", "PFC marks ECN bits"],
@@ -524,7 +547,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-020",
-      objective: "3.1.1",
+      objective: "3.1.a",
       kind: "single",
       prompt: "In a well-tuned RoCEv2 fabric, which mechanism should react to congestion first?",
       choices: ["PFC", "ECN with DCQCN", "Tail drop", "STP"],
@@ -533,7 +556,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-021",
-      objective: "3.1.1",
+      objective: "3.1.a",
       kind: "single",
       prompt: "What does ETS (802.1Qaz) provide?",
       choices: ["Per-priority pause", "Minimum bandwidth guarantees per traffic class", "ECN marking", "Link aggregation"],
@@ -542,7 +565,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-022",
-      objective: "3.1.1",
+      objective: "3.1.a",
       kind: "multi",
       prompt: "Which TWO are known risks of relying heavily on PFC?",
       choices: ["Head-of-line blocking and congestion spreading", "PFC storms and deadlock", "Increased ECMP entropy", "Lower MTU", "Loss of VLAN tagging"],
@@ -551,7 +574,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-023",
-      objective: "3.1.1",
+      objective: "3.1.a",
       kind: "cli",
       prompt: "Enable PFC on this Nexus interface.",
       context: "N9K(config-if)#",
@@ -561,7 +584,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-024",
-      objective: "3.1.2",
+      objective: "3.1.b",
       kind: "single",
       prompt: "Which UDP destination port identifies RoCEv2?",
       choices: ["4789", "4791", "4341", "3260"],
@@ -570,7 +593,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-025",
-      objective: "3.1.2",
+      objective: "3.1.b",
       kind: "single",
       prompt: "Why can RoCEv2 span a Layer 3 spine-leaf fabric when RoCEv1 cannot?",
       choices: ["RoCEv2 uses TCP", "RoCEv2 is encapsulated in UDP/IP, so it is routable", "RoCEv2 uses VXLAN", "RoCEv1 needs InfiniBand switches"],
@@ -579,7 +602,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-026",
-      objective: "3.1.3",
+      objective: "3.1.c",
       kind: "single",
       prompt: "On a Nexus 9000, which policy type sets the system-wide MTU and the PFC no-drop class?",
       choices: ["type qos", "type queuing", "type network-qos", "type control-plane"],
@@ -588,7 +611,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-027",
-      objective: "3.1.3",
+      objective: "3.1.c",
       kind: "single",
       prompt: "Which keyword at the end of a `random-detect` line turns WRED dropping into ECN marking?",
       choices: ["mark", "ecn", "pfc", "cnp"],
@@ -597,7 +620,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-028",
-      objective: "3.1.3",
+      objective: "3.1.c",
       kind: "single",
       prompt: "Where should Congestion Notification Packets (CNPs) be queued?",
       choices: ["Best-effort queue", "The same no-drop queue as RoCE data", "A strict-priority queue", "They should be dropped"],
@@ -606,7 +629,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-029",
-      objective: "3.1.4",
+      objective: "3.1.d",
       kind: "single",
       prompt: "Why does standard 5-tuple ECMP perform poorly for AI training traffic?",
       choices: ["AI uses IPv6 only", "There are few, very large flows with low entropy, so hash collisions overload some links", "ECMP does not work with UDP", "RoCE disables hashing"],
@@ -615,7 +638,7 @@ show policy-map system type network-qos`,
     },
     {
       id: "d-030",
-      objective: "3.1.4",
+      objective: "3.1.d",
       kind: "single",
       prompt: "Which technique moves a flow to another path during idle gaps without reordering packets?",
       choices: ["Static ECMP", "Flowlet-based dynamic load balancing", "Per-VLAN load sharing", "LACP"],

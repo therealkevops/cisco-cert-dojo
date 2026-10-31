@@ -80,7 +80,7 @@ export const dcaiBankA: Question[] = [
   // 1.3 infra types
   {
     id: "d-109",
-    objective: "1.3",
+    objective: "1.4",
     kind: "single",
     prompt: "A hospital must keep patient data on site for regulatory reasons but wants to train models on it. Which model fits best?",
     choices: ["Public cloud only", "On-premises (or a sovereign/private) AI infrastructure", "Edge-only inference", "SaaS chatbot"],
@@ -89,7 +89,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-110",
-    objective: "1.3",
+    objective: "1.4",
     kind: "single",
     prompt: "When does on-premises GPU infrastructure usually become cheaper than renting cloud GPUs?",
     choices: ["For short, bursty experiments", "When GPUs are highly utilised over a long period", "Never", "Only for inference"],
@@ -98,7 +98,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-111",
-    objective: "1.3",
+    objective: "1.4",
     kind: "multi",
     prompt: "Which TWO are typical reasons to run AI inference at the edge?",
     choices: ["Low latency for local decisions", "Reducing backhaul of large data such as video", "Training very large foundation models", "Unlimited power and cooling", "Avoiding any model updates"],
@@ -108,7 +108,7 @@ export const dcaiBankA: Question[] = [
   // 1.4 components
   {
     id: "d-112",
-    objective: "1.4",
+    objective: "1.5",
     kind: "single",
     prompt: "In Kubernetes, which component makes GPUs schedulable resources for pods?",
     choices: ["kube-proxy", "A GPU device plugin / GPU operator", "etcd", "CoreDNS"],
@@ -117,7 +117,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-113",
-    objective: "1.4",
+    objective: "1.5",
     kind: "single",
     prompt: "What is the role of Slurm in many AI training clusters?",
     choices: ["A storage protocol", "A workload manager that queues and schedules batch jobs across nodes and GPUs", "A congestion control algorithm", "A GPU driver"],
@@ -126,7 +126,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-114",
-    objective: "1.4",
+    objective: "1.5",
     kind: "single",
     prompt: "Which storage access type suits a shared dataset read by hundreds of GPU nodes at once?",
     choices: ["Local block storage on one server", "A shared or parallel file system (or object storage with a high-throughput client)", "Tape", "A single iSCSI LUN mounted read-write by all nodes"],
@@ -135,7 +135,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-115",
-    objective: "1.4",
+    objective: "1.5",
     kind: "single",
     prompt: "What does NVMe over Fabrics provide?",
     choices: ["GPU-to-GPU links", "Remote access to NVMe storage with very low latency over a network (RDMA, TCP or FC)", "A Kubernetes plugin", "Power management"],
@@ -144,7 +144,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-116",
-    objective: "1.4",
+    objective: "1.5",
     kind: "single",
     prompt: "Which network in an AI cluster typically carries user access, orchestration and storage traffic, separate from GPU collectives?",
     choices: ["Back-end network", "Front-end network", "NVLink domain", "Out-of-band console"],
@@ -154,7 +154,7 @@ export const dcaiBankA: Question[] = [
   // 1.5 Cisco solutions
   {
     id: "d-117",
-    objective: "1.5",
+    objective: "1.6",
     kind: "single",
     prompt: "What is the main value of Cisco Validated Designs for AI infrastructure?",
     choices: ["They replace support contracts", "They give tested, documented reference architectures, which reduces deployment risk and time", "They are a GPU model", "They are mandatory for licensing"],
@@ -163,7 +163,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-118",
-    objective: "1.5",
+    objective: "1.6",
     kind: "single",
     prompt: "How is a Hyperfabric deployment managed?",
     choices: ["Per-switch CLI only", "From a cloud-hosted controller: design the fabric there, then the switches are claimed and configured automatically", "Through APIC on site", "Through SNMP"],
@@ -172,7 +172,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-119",
-    objective: "1.5",
+    objective: "1.6",
     kind: "single",
     prompt: "Which Cisco switching families are positioned for high-speed AI back-end Ethernet fabrics?",
     choices: ["Catalyst 1000", "Nexus 9000 (including Silicon One-based models) at 400G/800G", "Meraki MS", "ISR"],
@@ -181,7 +181,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-120",
-    objective: "1.5",
+    objective: "1.6",
     kind: "single",
     prompt: "What is an AI POD sized and validated for?",
     choices: ["A single laptop", "Specific AI use cases such as inference or RAG, as a ready-to-deploy unit of compute, network, storage and software", "Campus Wi-Fi", "Firewall clustering"],
@@ -190,7 +190,7 @@ export const dcaiBankA: Question[] = [
   },
   {
     id: "d-121",
-    objective: "1.5",
+    objective: "1.6",
     kind: "single",
     prompt: "Which Cisco platform provides SaaS lifecycle management (policies, firmware, inventory) for UCS servers in an AI POD?",
     choices: ["Intersight", "Catalyst Center", "Umbrella", "ThousandEyes"],

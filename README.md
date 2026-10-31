@@ -7,7 +7,7 @@ Loaded today:
 | Exam | Code | Role | Content |
 | --- | --- | --- | --- |
 | ENCOR v1.2 | 350-401 | CCNP Enterprise core | 40 objectives · 304 questions · 9 CLI labs · 31 Wire Room scenarios |
-| DCAI v1.0 | 300-640 | Data Center AI Infrastructure (Specialist / CCNP DC concentration) | 20 objectives · 150 questions · 2 NX-OS labs |
+| DCAI v1.0 | 300-640 | Data Center AI Infrastructure (Specialist / CCNP DC concentration) | 21 objectives · 278 questions · 2 NX-OS labs |
 
 > **Note on the pairing.** 300-640 DCAI is a *Data Center* concentration. It completes CCNP Data Center together with 350-601 DCCOR, and passing it on its own earns the DCAI Specialist. CCNP Enterprise needs ENCOR plus an *Enterprise* concentration (ENARSI, ENSDWI, ENAUTO, ...).
 
@@ -51,4 +51,4 @@ The simulator engine lives in `src/lib/net/`. It models VLANs, 802.1Q trunks, pe
 
 Run `npm run validate` after editing. It fails if a question points at a missing objective, an answer index is out of range, or a lab cannot be completed with its own canonical commands.
 
-Blueprints follow Cisco's published exam topics: [ENCOR v1.2](https://learningcontent.cisco.com/documents/marketing/exam-topics/350-401-ENCORE-v1.2.pdf) · [DCAI](https://learningnetwork.cisco.com/s/dcai-exam-topics). This is an independent study tool, not affiliated with or endorsed by Cisco.
+Blueprints follow Cisco's published exam topics: [ENCOR v1.2](https://learningcontent.cisco.com/documents/marketing/exam-topics/350-401-ENCORE-v1.2.pdf) · [DCAI v1.0](https://learningcontent.cisco.com/documents/marketing/exam-topics/300-640-DCAI-v1.0_2025Nov5.pdf). This is an independent study tool, not affiliated with or endorsed by Cisco.
