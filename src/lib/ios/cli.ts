@@ -7,6 +7,9 @@ import {
   longIf,
   showAcls,
   showArp,
+  showBgpNeighbors,
+  showBgpSummary,
+  showBgpTable,
   showDhcpBinding,
   showDhcpConflict,
   showDhcpPool,
@@ -44,7 +47,9 @@ export type Mode =
   | { m: "acl"; name: string }
   | { m: "line" }
   | { m: "router" }
-  | { m: "dhcp"; pool: string };
+  | { m: "dhcp"; pool: string }
+  | { m: "bgp"; af?: boolean }
+  | { m: "rmap"; name: string; seq: number };
 
 export type Session = { dev: string; priv: boolean; mode: Mode };
 
@@ -76,6 +81,8 @@ export function prompt(s: Session, isHost: boolean): string {
     line: "(config-line)",
     router: "(config-router)",
     dhcp: "(dhcp-config)",
+    bgp: s.mode.m === "bgp" && s.mode.af ? "(config-router-af)" : "(config-router)",
+    rmap: "(config-route-map)",
   };
   return `${s.dev}${sfx[s.mode.m]}${s.priv ? "#" : ">"}`;
 }
@@ -234,7 +241,22 @@ function showTree(): Node[] {
     kw("ip", "IP information", {
       sub: [
         kw("interface", "IP interface status and configuration", { sub: [kw("brief", "Brief summary of IP status and configuration", { run: (c) => say(c, showIpIntBrief(c.net, c.s.dev)) })] }),
-        kw("route", "IP routing table", { when: isL3, run: (c) => say(c, showIpRoute(c.net, c.s.dev)) }),
+        kw("route", "IP routing table", {
+          when: isL3,
+          run: (c) => say(c, showIpRoute(c.net, c.s.dev)),
+          sub: (["bgp", "ospf", "static", "connected"] as const).map((k) => kw(k, `${k} routes only`, { run: (c) => say(c, showIpRoute(c.net, c.s.dev, k)) })),
+        }),
+        kw("bgp", "BGP information", {
+          when: isL3,
+          run: (c) => say(c, showBgpTable(c.net, c.s.dev)),
+          sub: [
+            kw("summary", "Summary of BGP neighbor status", { run: (c) => say(c, showBgpSummary(c.net, c.s.dev)) }),
+            kw("neighbors", "Detailed information on TCP and BGP neighbor connections", {
+              run: (c) => say(c, showBgpNeighbors(c.net, c.s.dev)),
+              sub: [arg("ip", "nip", "A.B.C.D", "Neighbor to display information about", { run: (c) => say(c, showBgpNeighbors(c.net, c.s.dev, c.a.nip)) })],
+            }),
+          ],
+        }),
         kw("arp", "IP ARP table", { run: (c) => say(c, showArp(c.net, c.s.dev)) }),
         kw("ospf", "OSPF information", {
           when: isL3,
@@ -314,6 +336,7 @@ function execTree(): Node[] {
         kw("ip", "IP", {
           when: isL3,
           sub: [
+            kw("bgp", "Clear BGP connections", { sub: [kw("*", "Clear all peers", { run: (c) => say(c, "(Wire Room recomputes BGP after every change, so sessions and policies are already current.)") })] }),
             kw("ospf", "OSPF", { sub: [kw("process", "Reset OSPF process", { run: (c) => say(c, "Reset ALL OSPF processes? [no]: yes\n(Wire Room recomputes OSPF after every change, so this is instant.)") })] }),
             kw("nat", "Clear NAT", { sub: [kw("translation", "Clear dynamic translations", { sub: [kw("*", "Delete all dynamic translations", { run: (c) => c.net.natTables.set(c.s.dev, (c.net.natTables.get(c.s.dev) ?? []).filter((e) => e.kind === "static")) })] })] }),
             kw("dhcp", "Clear DHCP", {
@@ -588,6 +611,7 @@ function configTree(): Node[] {
           ],
         }),
         kw("nat", "NAT configuration commands", { when: isL3, sub: natGlobalTree(false) }),
+        kw("prefix-list", "Build a prefix list", { when: isL3, sub: [arg("word", "name", "WORD", "Name of a prefix list", { sub: [arg("line", "rule", "LINE", "[seq N] permit|deny A.B.C.D/nn [ge N] [le N]", { run: (c) => prefixList(c) })] })] }),
         kw("dhcp", "Configure DHCP server and relay parameters", {
           when: isL3,
           sub: [
@@ -675,8 +699,35 @@ function configTree(): Node[] {
           ],
         }),
         kw("eigrp", "Enhanced Interior Gateway Routing Protocol (EIGRP)", { run: notSimulated("EIGRP"), sub: [arg("line", "x", "WORD", "AS number", { run: notSimulated("EIGRP") })] }),
-        kw("bgp", "Border Gateway Protocol (BGP)", { run: notSimulated("BGP"), sub: [arg("line", "x", "WORD", "AS number", { run: notSimulated("BGP") })] }),
+        kw("bgp", "Border Gateway Protocol (BGP)", {
+          sub: [
+            arg("num", "asn", "<1-4294967295>", "Autonomous system number", {
+              range: [1, 4294967295],
+              run: (c) => {
+                if (c.dev.bgp && c.dev.bgp.asn !== +c.a.asn) return say(c, `% BGP is already running; AS is ${c.dev.bgp.asn}`);
+                if (!c.dev.bgp) edit(c, (d) => (d.bgp = { asn: +c.a.asn, neighbors: [], networks: [] }));
+                c.s.mode = { m: "bgp" };
+              },
+            }),
+          ],
+        }),
         kw("rip", "Routing Information Protocol (RIP)", { run: notSimulated("RIP") }),
+      ],
+    }),
+    kw("route-map", "Create route-map or enter route-map command mode", {
+      when: isL3,
+      sub: [
+        arg("word", "name", "WORD", "Route map tag", {
+          run: (c) => routeMapEnter(c, "permit", 10),
+          sub: [
+            ...(["permit", "deny"] as const).map((a) =>
+              kw(a, `Route map ${a}s set operations`, {
+                run: (c) => routeMapEnter(c, a, 10),
+                sub: [arg("num", "seq", "<0-65535>", "Sequence to insert to/delete from existing route-map entry", { range: [0, 65535], run: (c) => routeMapEnter(c, a, +c.a.seq) })],
+              }),
+            ),
+          ],
+        }),
       ],
     }),
     kw("line", "Configure a terminal line", { sub: [arg("line", "x", "LINE", "con 0 | vty 0 15", { run: (c) => (c.s.mode = { m: "line" }) })] }),
@@ -705,6 +756,7 @@ function configTree(): Node[] {
             kw("access-list", "Named access list", { sub: [kw("extended", "Extended Access List", { sub: [arg("word", "name", "WORD", "Access-list name", { run: (c) => edit(c, (d) => { if (d.acls) delete d.acls[c.a.name]; }) })] })] }),
             kw("domain-lookup", "Disable DNS lookup", { run: accepted }),
             kw("nat", "NAT configuration commands", { when: isL3, sub: natGlobalTree(true) }),
+            kw("prefix-list", "Remove a prefix list", { sub: [arg("word", "name", "WORD", "Name of a prefix list", { run: (c) => edit(c, (d) => { if (d.prefixLists) delete d.prefixLists[c.a.name]; }) })] }),
             kw("dhcp", "DHCP", {
               when: isL3,
               sub: [
@@ -719,7 +771,17 @@ function configTree(): Node[] {
           ],
         }),
         kw("router", "Disable a routing process", {
-          sub: [kw("ospf", "Open Shortest Path First (OSPF)", { sub: [arg("num", "pid", "<1-65535>", "Process ID", { range: [1, 65535], run: (c) => edit(c, (d) => { if (d.ospf?.pid === +c.a.pid) delete d.ospf; else say(c, "% OSPF process not found"); }) })] })],
+          sub: [
+            kw("bgp", "Border Gateway Protocol (BGP)", { sub: [arg("num", "asn", "<1-4294967295>", "AS number", { run: (c) => edit(c, (d) => { if (d.bgp?.asn === +c.a.asn) delete d.bgp; else say(c, "% BGP not running with that AS"); }) })] }),
+            kw("ospf", "Open Shortest Path First (OSPF)", { sub: [arg("num", "pid", "<1-65535>", "Process ID", { range: [1, 65535], run: (c) => edit(c, (d) => { if (d.ospf?.pid === +c.a.pid) delete d.ospf; else say(c, "% OSPF process not found"); }) })] })],
+        }),
+        kw("route-map", "Delete a route-map", {
+          sub: [
+            arg("word", "name", "WORD", "Route map tag", {
+              run: (c) => edit(c, (d) => { if (d.routeMaps) delete d.routeMaps[c.a.name]; }),
+              sub: [...(["permit", "deny"] as const).map((a) => kw(a, "entry", { sub: [arg("num", "seq", "<0-65535>", "Sequence", { run: (c) => edit(c, (d) => { if (d.routeMaps?.[c.a.name]) d.routeMaps[c.a.name] = d.routeMaps[c.a.name].filter((e) => e.seq !== +c.a.seq); }) })] }))],
+            }),
+          ],
         }),
         kw("access-list", "Remove an access list", { sub: [arg("num", "n", "<1-199>", "IP access list number", { run: (c) => edit(c, (d) => { if (d.acls) delete d.acls[c.a.n]; }) })] }),
         kw("interface", "Delete a logical interface", {
@@ -960,6 +1022,218 @@ function simpleSubTree(exitTo: Mode["m"]): Node[] {
     kw("logging", "Modify message logging facilities", { sub: [arg("line", "x", "LINE", "synchronous", { run: accepted })] }),
     kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
     kw("exit", "Exit from this mode", { run: (c) => (c.s.mode = { m: exitTo === "exec" ? "exec" : "config" } as Mode) }),
+    kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
+  ];
+}
+
+function routeMapEnter(c: Ctx, action: "permit" | "deny", seq: number) {
+  edit(c, (d) => {
+    d.routeMaps = d.routeMaps ?? {};
+    const list = (d.routeMaps[c.a.name] = d.routeMaps[c.a.name] ?? []);
+    const e = list.find((x) => x.seq === seq);
+    if (e) e.action = action;
+    else list.push({ seq, action });
+    list.sort((a, b) => a.seq - b.seq);
+  });
+  c.s.mode = { m: "rmap", name: c.a.name, seq };
+}
+
+/** `ip prefix-list NAME [seq N] permit|deny A.B.C.D/nn [ge N] [le N]` */
+function prefixList(c: Ctx) {
+  const t = c.a.rule.trim().split(/\s+/);
+  let i = 0;
+  let seq: number | undefined;
+  if (t[0] === "seq") ((seq = +t[1]), (i = 2));
+  const word = t[i++];
+  if (word !== "permit" && word !== "deny") return say(c, "% Expected permit or deny");
+  const action: "permit" | "deny" = word;
+  const p = parseCidr(t[i++] ?? "");
+  if (!p) return say(c, "% Invalid prefix (use A.B.C.D/nn)");
+  const prefix = `${intToIp(p.net)}/${p.len}`;
+  let ge: number | undefined;
+  let le: number | undefined;
+  while (i < t.length) {
+    const k = t[i++];
+    const v = +t[i++];
+    if (k === "ge") ge = v;
+    else if (k === "le") le = v;
+    else return say(c, `% Unexpected "${k}"`);
+  }
+  if ((ge !== undefined && (ge <= p.len || ge > 32)) || (le !== undefined && (le < (ge ?? p.len) || le > 32))) return say(c, "% Invalid prefix range: need len < ge <= le <= 32");
+  edit(c, (d) => {
+    d.prefixLists = d.prefixLists ?? {};
+    const list = (d.prefixLists[c.a.name] = d.prefixLists[c.a.name] ?? []);
+    const s = seq ?? (list.length ? Math.max(...list.map((e) => e.seq)) + 5 : 5);
+    d.prefixLists[c.a.name] = [...list.filter((e) => e.seq !== s), { seq: s, action, prefix, ge, le }].sort((a, b) => a.seq - b.seq);
+  });
+}
+
+/** Commands under `router bgp <asn>` (and its ipv4 address family). */
+function bgpTree(): Node[] {
+  const b = (c: Ctx, fn: (x: NonNullable<Device["bgp"]>) => void) => edit(c, (d) => d.bgp && fn(d.bgp));
+  const nbr = (c: Ctx, fn: (n: NonNullable<Device["bgp"]>["neighbors"][number]) => void) => {
+    if (!c.dev.bgp?.neighbors.some((n) => n.ip === c.a.nip)) return say(c, `% Specify remote-as or peer-group commands first`);
+    b(c, (x) => fn(x.neighbors.find((n) => n.ip === c.a.nip)!));
+  };
+  const classful = (ip: string) => {
+    const first = +ip.split(".")[0];
+    return first < 128 ? 8 : first < 192 ? 16 : 24;
+  };
+  const network = (neg: boolean) =>
+    arg("ip", "net", "A.B.C.D", "Network number", {
+      run: (c) => setNetwork(c, classful(c.a.net), neg),
+      sub: [kw("mask", "Network mask", { sub: [arg("mask", "mask", "A.B.C.D", "Network mask", { run: (c) => setNetwork(c, maskToLen(c.a.mask), neg) })] })],
+    });
+  const setNetwork = (c: Ctx, len: number | null, neg: boolean) => {
+    if (len === null) return say(c, "% Invalid mask");
+    const pfx = `${intToIp((ipToInt(c.a.net) & maskOf(len)) >>> 0)}/${len}`;
+    b(c, (x) => {
+      x.networks = x.networks.filter((n) => n !== pfx);
+      if (!neg) x.networks.push(pfx);
+    });
+  };
+  const nbrCmds = (neg: boolean): Node[] => [
+    kw("remote-as", "Specify a BGP neighbor", {
+      run: neg ? (c) => b(c, (x) => (x.neighbors = x.neighbors.filter((n) => n.ip !== c.a.nip))) : undefined,
+      sub: neg
+        ? []
+        : [
+            arg("num", "as", "<1-4294967295>", "AS of remote neighbor", {
+              range: [1, 4294967295],
+              run: (c) =>
+                b(c, (x) => {
+                  const n = x.neighbors.find((y) => y.ip === c.a.nip);
+                  if (n) n.remoteAs = +c.a.as;
+                  else x.neighbors.push({ ip: c.a.nip, remoteAs: +c.a.as });
+                }),
+            }),
+          ],
+    }),
+    kw("shutdown", "Administratively shut down this neighbor", { run: (c) => nbr(c, (n) => (neg ? delete n.shutdown : (n.shutdown = true))) }),
+    kw("update-source", "Source of routing updates", {
+      run: neg ? (c) => nbr(c, (n) => delete n.updateSource) : undefined,
+      sub: [arg("iface", "if", "<interface>", "Interface", { run: (c) => nbr(c, (n) => (neg ? delete n.updateSource : (n.updateSource = c.a.if))) })],
+    }),
+    kw("ebgp-multihop", "Allow EBGP neighbors not on directly connected networks", {
+      run: (c) => nbr(c, (n) => (neg ? delete n.multihop : (n.multihop = 255))),
+      sub: [arg("num", "ttl", "<1-255>", "maximum hop count", { range: [1, 255], run: (c) => nbr(c, (n) => (neg ? delete n.multihop : (n.multihop = +c.a.ttl))) })],
+    }),
+    kw("next-hop-self", "Disable the next hop calculation for this neighbor", { run: (c) => nbr(c, (n) => (neg ? delete n.nextHopSelf : (n.nextHopSelf = true))) }),
+    kw("weight", "Set default weight for routes from this neighbor", {
+      run: neg ? (c) => nbr(c, (n) => delete n.weight) : undefined,
+      sub: [arg("num", "w", "<0-65535>", "default weight", { range: [0, 65535], run: (c) => nbr(c, (n) => (neg ? delete n.weight : (n.weight = +c.a.w))) })],
+    }),
+    kw("route-map", "Apply route map to neighbor", {
+      sub: [
+        arg("word", "rm", "WORD", "Name of route map", {
+          sub: [
+            kw("in", "Apply map to incoming routes", { run: (c) => nbr(c, (n) => (neg ? delete n.routeMapIn : (n.routeMapIn = c.a.rm))) }),
+            kw("out", "Apply map to outbound routes", { run: (c) => nbr(c, (n) => (neg ? delete n.routeMapOut : (n.routeMapOut = c.a.rm))) }),
+          ],
+        }),
+      ],
+    }),
+    kw("activate", "Enable the Address Family for this Neighbor", { run: accepted }),
+    kw("description", "Neighbor specific description", { sub: [arg("line", "x", "LINE", "Up to 80 characters", { run: accepted })] }),
+    kw("password", "Set a password", { sub: [arg("line", "x", "LINE", "password", { run: notSimulated("BGP MD5 authentication") })] }),
+  ];
+  const redist = (neg: boolean) =>
+    kw("redistribute", "Redistribute information from another routing protocol", {
+      sub: (["connected", "static", "ospf"] as const).map((k) =>
+        kw(k, k === "ospf" ? "Open Shortest Path First (OSPF)" : k === "static" ? "Static routes" : "Connected", {
+          run: (c) => b(c, (x) => (x.redistribute = neg ? (x.redistribute ?? []).filter((r) => r !== k) : [...new Set([...(x.redistribute ?? []), k])])),
+          sub: k === "ospf" ? [arg("num", "pid", "<1-65535>", "Process ID", { run: (c) => b(c, (x) => (x.redistribute = neg ? (x.redistribute ?? []).filter((r) => r !== k) : [...new Set([...(x.redistribute ?? []), k])])) })] : [],
+        }),
+      ),
+    });
+  return [
+    kw("bgp", "BGP specific commands", {
+      sub: [
+        kw("router-id", "Override configured router identifier", { sub: [arg("ip", "rid", "A.B.C.D", "Manually configured router identifier", { run: (c) => b(c, (x) => (x.routerId = c.a.rid)) })] }),
+        kw("log-neighbor-changes", "Log neighbor up/down and reset reason", { run: accepted }),
+      ],
+    }),
+    kw("neighbor", "Specify a neighbor router", { sub: [arg("ip", "nip", "A.B.C.D", "Neighbor address", { sub: nbrCmds(false) })] }),
+    kw("network", "Specify a network to announce via BGP", { sub: [network(false)] }),
+    redist(false),
+    kw("address-family", "Enter Address Family command mode", {
+      sub: [kw("ipv4", "Address family", { run: (c) => (c.s.mode = { m: "bgp", af: true }), sub: [kw("unicast", "Address Family modifier", { run: (c) => (c.s.mode = { m: "bgp", af: true }) })] })],
+    }),
+    kw("exit-address-family", "Exit from Address Family configuration mode", { run: (c) => (c.s.mode = { m: "bgp" }) }),
+    kw("no", "Negate a command or set its defaults", {
+      sub: [
+        kw("neighbor", "Specify a neighbor router", {
+          sub: [arg("ip", "nip", "A.B.C.D", "Neighbor address", { run: (c) => b(c, (x) => (x.neighbors = x.neighbors.filter((n) => n.ip !== c.a.nip))), sub: nbrCmds(true) })],
+        }),
+        kw("network", "Stop announcing a network", { sub: [network(true)] }),
+        redist(true),
+        kw("bgp", "BGP specific commands", { sub: [kw("router-id", "Remove the router ID", { run: (c) => b(c, (x) => delete x.routerId) })] }),
+      ],
+    }),
+    kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
+    kw("exit", "Exit from routing protocol configuration mode", { run: (c) => (c.s.mode = c.s.mode.m === "bgp" && c.s.mode.af ? { m: "bgp" } : { m: "config" }) }),
+    kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
+  ];
+}
+
+/** Commands under `route-map NAME permit|deny SEQ`. */
+function rmapTree(): Node[] {
+  const e = (c: Ctx, fn: (x: NonNullable<Device["routeMaps"]>[string][number]) => void) =>
+    edit(c, (d) => {
+      if (c.s.mode.m !== "rmap") return;
+      const { name, seq } = c.s.mode;
+      const x = d.routeMaps?.[name]?.find((y) => y.seq === seq);
+      if (x) fn(x);
+    });
+  const sets = (neg: boolean) => [
+    kw("local-preference", "BGP local preference path attribute", {
+      run: neg ? (c) => e(c, (x) => delete x.setLocalPref) : undefined,
+      sub: [arg("num", "v", "<0-4294967295>", "Preference value", { run: (c) => e(c, (x) => (neg ? delete x.setLocalPref : (x.setLocalPref = +c.a.v))) })],
+    }),
+    kw("weight", "BGP weight for routing table", {
+      run: neg ? (c) => e(c, (x) => delete x.setWeight) : undefined,
+      sub: [arg("num", "v", "<0-65535>", "Weight value", { run: (c) => e(c, (x) => (neg ? delete x.setWeight : (x.setWeight = +c.a.v))) })],
+    }),
+    kw("metric", "Metric value for destination routing protocol (MED)", {
+      run: neg ? (c) => e(c, (x) => delete x.setMed) : undefined,
+      sub: [arg("num", "v", "<0-4294967295>", "Metric value", { run: (c) => e(c, (x) => (neg ? delete x.setMed : (x.setMed = +c.a.v))) })],
+    }),
+    kw("as-path", "Prepend string for a BGP AS-path attribute", {
+      sub: [
+        kw("prepend", "Prepend to the as-path", {
+          run: neg ? (c) => e(c, (x) => delete x.setPrepend) : undefined,
+          sub: [
+            arg("line", "list", "<1-4294967295>", "AS number(s)", {
+              run: (c) => {
+                const list = c.a.list.split(/\s+/).map(Number);
+                if (list.some((n) => !Number.isInteger(n) || n < 1)) return say(c, "% Invalid AS number");
+                e(c, (x) => (neg ? delete x.setPrepend : (x.setPrepend = list)));
+              },
+            }),
+          ],
+        }),
+      ],
+    }),
+  ];
+  const match = (neg: boolean) =>
+    kw("ip", "IP specific information", {
+      sub: [
+        kw("address", "Match address of route or match packet", {
+          sub: [
+            kw("prefix-list", "Match entries of prefix-lists", { sub: [arg("word", "pl", "WORD", "IP prefix-list name", { run: (c) => e(c, (x) => (neg ? delete x.matchPrefixList : (x.matchPrefixList = c.a.pl))) })] }),
+            arg("word", "acl", "WORD", "IP access-list number or name", { run: (c) => e(c, (x) => (neg ? delete x.matchAcl : (x.matchAcl = c.a.acl))) }),
+          ],
+        }),
+      ],
+    });
+  return [
+    kw("match", "Match values from routing table", { sub: [match(false)] }),
+    kw("set", "Set values in destination routing protocol", { sub: sets(false) }),
+    kw("no", "Negate a command or set its defaults", {
+      sub: [kw("match", "Match values from routing table", { sub: [match(true)] }), kw("set", "Set values in destination routing protocol", { sub: sets(true) })],
+    }),
+    kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
+    kw("exit", "Exit from route-map configuration mode", { run: (c) => (c.s.mode = { m: "config" }) }),
     kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
   ];
 }
@@ -1286,6 +1560,8 @@ const TREES: Record<Mode["m"], Node[]> = {
   line: simpleSubTree("config"),
   router: ospfTree(),
   dhcp: dhcpTree(),
+  bgp: bgpTree(),
+  rmap: rmapTree(),
 };
 
 function runDo(c: Ctx) {
@@ -1374,7 +1650,7 @@ function dispatch(c: Ctx, root: Node[], line: string) {
 function listHelp(level: Node[], c: Ctx, runnable: boolean, prefix = ""): string {
   const rows = level
     .filter((n) => (!n.when || n.when(c)) && (!prefix || n.kw?.startsWith(prefix.toLowerCase())))
-    .map((n) => `  ${(n.kw ?? n.label ?? "").padEnd(18)}${n.help}`);
+    .map((n) => `  ${(n.kw ?? n.label ?? "").padEnd(17)} ${n.help}`);
   if (runnable && !prefix) rows.push("  <cr>");
   return rows.length ? rows.join("\n") : "% Unrecognized command";
 }
@@ -1393,6 +1669,17 @@ export function runCli(line: string, s: Session, topo: Topology, net: Net): CliR
   if (dev.off) return { out: "% Device is powered off. Power it on from the canvas.", session: s };
   if (dev.kind === "pc" || dev.kind === "server") return runHost(line, s, topo, net);
 
+  const pipe = /^(.*?\S)\s*\|\s*(include|inc|i|exclude|exc|e|begin|beg|b|section|sec|s)\s+(.+)$/i.exec(line);
+  if (pipe && !line.trim().endsWith("?")) {
+    const r = runCli(pipe[1], s, topo, net);
+    let re: RegExp;
+    try {
+      re = new RegExp(pipe[3].trim(), "i");
+    } catch {
+      return { ...r, out: "% Invalid regular expression" };
+    }
+    return { ...r, out: filterOutput(r.out, pipe[2].toLowerCase()[0], re) };
+  }
   const c = ctxFor(line, s, topo, net);
   const root = TREES[c.s.mode.m];
   if (line.trim().endsWith("?")) {
@@ -1407,6 +1694,29 @@ export function runCli(line: string, s: Session, topo: Topology, net: Net): CliR
   dispatch(c, root, line);
   if (c.changed) c.lines.push(...adjChanges(net, new Net(c.topo), c.s.dev));
   return { out: c.lines.join("\n"), session: c.s, topo: c.changed ? c.topo : undefined, probe: c.probe, renamed: c.renamed };
+}
+
+/** IOS output modifiers: `| include`, `| exclude`, `| begin`, `| section`. */
+function filterOutput(out: string, kind: string, re: RegExp): string {
+  const lines = out.split("\n");
+  if (kind === "i") return lines.filter((l) => re.test(l)).join("\n");
+  if (kind === "e") return lines.filter((l) => !re.test(l)).join("\n");
+  if (kind === "b") {
+    const i = lines.findIndex((l) => re.test(l));
+    return i < 0 ? "" : lines.slice(i).join("\n");
+  }
+  // section: a matching line plus the indented lines beneath it
+  const keep: string[] = [];
+  let inSec = false;
+  for (const l of lines) {
+    if (/^\S/.test(l)) inSec = re.test(l);
+    else if (!inSec && re.test(l)) {
+      keep.push(l);
+      continue;
+    }
+    if (inSec) keep.push(l);
+  }
+  return keep.join("\n");
 }
 
 /** %OSPF-5-ADJCHG lines for this device after a config change. */
@@ -1426,6 +1736,15 @@ function adjChanges(before: Net, after: Net, dev: string): string[] {
     if (now.has(k) || st !== "FULL") continue;
     const [iface, rid] = k.split("|");
     out.push(`%OSPF-5-ADJCHG: Process ${pid}, Nbr ${rid} on ${longIf(iface)} from FULL to DOWN, Neighbor Down: ${after.ospf().problems.some((p) => p.dev === dev && p.iface === iface) ? "Dead timer expired" : "Interface down or detached"}`);
+  }
+  // BGP session changes.
+  const bk = (x: { peerIp: string }) => x.peerIp;
+  const bwas = new Map(before.bgp().sessions.filter((x) => x.dev === dev).map((x) => [bk(x), x]));
+  for (const x of after.bgp().sessions.filter((y) => y.dev === dev)) {
+    const w = bwas.get(bk(x));
+    if (x.state === "Established" && w?.state !== "Established") out.push(`%BGP-5-ADJCHANGE: neighbor ${x.peerIp} Up`);
+    if (x.state !== "Established" && w?.state === "Established") out.push(`%BGP-5-ADJCHANGE: neighbor ${x.peerIp} Down${x.state === "Idle (Admin)" ? " Admin. shutdown" : ""}`);
+    if (x.notify === "wrong-as" && w?.notify !== "wrong-as") out.push(`%BGP-3-NOTIFICATION: sent to neighbor ${x.peerIp} passive 2/2 (peer in wrong AS) 2 bytes ${x.remoteAs.toString(16).toUpperCase().padStart(4, "0")}`);
   }
   return out;
 }

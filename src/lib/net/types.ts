@@ -45,6 +45,42 @@ export type DhcpPool = {
   domain?: string;
 };
 
+export type BgpNeighbor = {
+  ip: string;
+  remoteAs: number;
+  shutdown?: boolean;
+  /** Interface whose address sources the session (`update-source`). */
+  updateSource?: string;
+  /** `ebgp-multihop` TTL. Undefined = 1 for eBGP. */
+  multihop?: number;
+  nextHopSelf?: boolean;
+  weight?: number;
+  routeMapIn?: string;
+  routeMapOut?: string;
+};
+
+export type Bgp = {
+  asn: number;
+  routerId?: string;
+  neighbors: BgpNeighbor[];
+  /** `network A mask M`: originated only when this exact prefix is in the routing table. */
+  networks: string[];
+  redistribute?: ("connected" | "static" | "ospf")[];
+};
+
+export type RouteMapEntry = {
+  seq: number;
+  action: "permit" | "deny";
+  matchPrefixList?: string;
+  matchAcl?: string;
+  setLocalPref?: number;
+  setWeight?: number;
+  setMed?: number;
+  setPrepend?: number[];
+};
+
+export type PrefixListEntry = { seq: number; action: "permit" | "deny"; prefix: string; ge?: number; le?: number };
+
 export type ChannelMode = "active" | "passive" | "desirable" | "auto" | "on";
 
 /** Per-interface OSPF settings (`ip ospf ...`). */
@@ -123,6 +159,9 @@ export type Device = {
   dhcp?: { pools: DhcpPool[]; excluded: { start: string; end: string }[] };
   /** Hosts only: the NIC is set to obtain its address by DHCP. */
   dhcpClient?: boolean;
+  bgp?: Bgp;
+  routeMaps?: Record<string, RouteMapEntry[]>;
+  prefixLists?: Record<string, PrefixListEntry[]>;
 };
 
 export type Link = { a: [string, string]; b: [string, string] };
@@ -147,6 +186,10 @@ export type Goal =
   | { type: "natVia"; from: string; to: string; device: string; label: string }
   /** The host gets a DHCP lease (optionally inside `within`), then optionally pings `to`. */
   | { type: "dhcp"; host: string; within?: string; to?: string; label: string }
+  /** The BGP session from `device` to neighbor address `neighbor` is Established. */
+  | { type: "bgpUp"; device: string; neighbor: string; label: string }
+  /** The device's best BGP path for `prefix` uses next hop `nextHop`. */
+  | { type: "bgpBest"; device: string; prefix: string; nextHop: string; label: string }
   /** A route for exactly this prefix is (or is not) in the device's table, optionally with this code. */
   | { type: "route"; device: string; prefix: string; code?: string; expect: boolean; label: string };
 

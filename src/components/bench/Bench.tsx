@@ -1088,7 +1088,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           </tbody>
         </table>
         <p className="silk" style={{ marginTop: 10 }}>
-          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), ACLs, NAT/PAT, DHCP server and relay, ICMP. Not yet: EIGRP/BGP, subinterfaces, TCP/UDP application traffic.
+          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), BGP (eBGP/iBGP, best-path, route-maps, prefix-lists), ACLs, NAT/PAT, DHCP server and relay, ICMP, output filters (| include, | section). Not yet: EIGRP, subinterfaces, TCP/UDP application traffic.
         </p>
       </div>
     </div>

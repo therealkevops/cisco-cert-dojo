@@ -1,6 +1,7 @@
 import type { Ace, ChannelMode, Device, Port, Topology } from "./types";
 import { aclAddrMatch, cidrNet, inCidr, intToIp, ipToInt, parseCidr, type Cidr } from "./ip";
 import { computeOspf, type OspfResult } from "./ospf";
+import { computeBgp, type BgpResult } from "./bgp";
 import type { DhcpBinding } from "./dhcp";
 
 // Wire Room engine: a deterministic, event-recording model of Ethernet
@@ -69,7 +70,8 @@ export type L3If = {
   aclOut?: string;
 };
 
-export type RouteEntry = { code: "C" | "L" | "S" | "O" | "O IA" | "O*E2"; prefix: string; cidr: Cidr; via?: string; iface?: string; metric?: number };
+/** `via` is always the directly connected next hop; `nh` keeps a BGP route's own (recursive) next hop for display. */
+export type RouteEntry = { code: "C" | "L" | "S" | "O" | "O IA" | "O*E2" | "B"; prefix: string; cidr: Cidr; via?: string; iface?: string; metric?: number; ad?: number; nh?: string };
 
 export type StpRole = "root" | "desig" | "alt";
 export type StpView = {
@@ -117,6 +119,7 @@ export class Net {
   bundles: Bundle[] = [];
   private stpCache = new Map<number, StpView>();
   private ospfCache?: OspfResult;
+  private bgpCache?: BgpResult;
   macTables = new Map<string, Map<string, { port: string; vlan: number; mac: string }>>();
   arpTables = new Map<string, Map<string, { mac: string; iface: string }>>();
   natTables = new Map<string, NatEntry[]>();
@@ -373,7 +376,8 @@ export class Net {
     return out;
   }
 
-  routes(devId: string): RouteEntry[] {
+  /** Connected, static and OSPF routes: everything BGP may use to resolve its next hops. */
+  baseRoutes(devId: string): RouteEntry[] {
     const d = this.devs.get(devId)!;
     const ifs = this.l3Ifs(devId).filter((i) => i.up);
     const out: RouteEntry[] = [];
@@ -396,6 +400,26 @@ export class Net {
       }
     }
     return out;
+  }
+
+  /** The routing table: base routes plus BGP, one winner per prefix by administrative distance. */
+  routes(devId: string): RouteEntry[] {
+    const base = this.baseRoutes(devId);
+    const bgp = this.bgp().routes.get(devId) ?? [];
+    if (!bgp.length) return base;
+    const ad = (r: RouteEntry) => r.ad ?? ({ C: 0, L: 0, S: 1, O: 110, "O IA": 110, "O*E2": 110, B: 20 } as const)[r.code];
+    const out = [...base];
+    for (const b of bgp) {
+      const i = out.findIndex((x) => x.code !== "L" && x.prefix === b.prefix);
+      if (i < 0) out.push(b);
+      else if (ad(b) < ad(out[i])) out[i] = b;
+    }
+    return out;
+  }
+
+  bgp(): BgpResult {
+    if (!this.bgpCache) this.bgpCache = computeBgp(this);
+    return this.bgpCache;
   }
 
   ospf(): OspfResult {
@@ -437,7 +461,9 @@ export class Net {
         ? `static route ${best.prefix} via ${best.via}`
         : best.code === "C"
           ? `connected network ${best.prefix}`
-          : `OSPF route ${best.code} ${best.prefix} [110/${best.metric}] via ${best.via}`;
+          : best.code === "B"
+            ? `BGP route ${best.prefix} [${best.ad}/${best.metric ?? 0}] with BGP next hop ${best.nh}, resolved recursively to ${best.via}`
+            : `OSPF route ${best.code} ${best.prefix} [110/${best.metric}] via ${best.via}`;
     return { iface, nextHop, why: `longest match is ${label}, out ${iface.name}` };
   }
 

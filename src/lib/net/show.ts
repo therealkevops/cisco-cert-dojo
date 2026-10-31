@@ -24,22 +24,29 @@ export function showIpIntBrief(net: Net, dev: string): string {
   return rows.join("\n");
 }
 
-export function showIpRoute(net: Net, dev: string): string {
-  const routes = net.routes(dev);
+export function showIpRoute(net: Net, dev: string, only?: string): string {
+  const routes = net.routes(dev).filter((r) => !only || (only === "ospf" ? r.code.startsWith("O") : only === "bgp" ? r.code === "B" : only === "static" ? r.code === "S" : r.code === "C" || r.code === "L"));
   const gw = routes.find((r) => r.prefix === "0.0.0.0/0");
   const head =
-    "Codes: L - local, C - connected, S - static, O - OSPF, IA - OSPF inter area\n       E2 - OSPF external type 2, * - candidate default\n\nGateway of last resort is " +
+    "Codes: L - local, C - connected, S - static, O - OSPF, B - BGP, IA - OSPF inter area\n       E2 - OSPF external type 2, * - candidate default\n\nGateway of last resort is " +
     (gw?.via ? `${gw.via} to network 0.0.0.0` : "not set") +
     "\n";
   if (!routes.length) return head + "\n(empty: no interfaces are up)";
-  const order: Record<string, number> = { S: 0, "O*E2": 1, O: 2, "O IA": 3, C: 4, L: 5 };
+  const order: Record<string, number> = { S: 0, B: 1, "O*E2": 2, O: 3, "O IA": 4, C: 5, L: 6 };
   const lines = routes
     .slice()
     .sort((a, b) => a.cidr.net - b.cidr.net || a.cidr.len - b.cidr.len || order[a.code] - order[b.code])
     .map((r) => {
       const code = r.code === "S" && r.prefix === "0.0.0.0/0" ? "S*" : r.code;
-      const ad = r.code === "S" ? " [1/0]" : r.code.startsWith("O") && r.iface !== "Null0" ? ` [110/${r.metric}]` : "";
-      const tail = r.iface === "Null0" ? " is a summary, 00:01:12, Null0" : r.via ? ` via ${r.via}${r.code.startsWith("O") ? `, 00:01:12, ${r.iface}` : ""}` : ` is directly connected, ${r.iface}`;
+      const ad = r.code === "S" ? " [1/0]" : r.code === "B" ? ` [${r.ad}/${r.metric ?? 0}]` : r.code.startsWith("O") && r.iface !== "Null0" ? ` [110/${r.metric}]` : "";
+      const tail =
+        r.iface === "Null0"
+          ? " is a summary, 00:01:12, Null0"
+          : r.code === "B"
+            ? ` via ${r.nh}, 00:02:41`
+            : r.via
+              ? ` via ${r.via}${r.code.startsWith("O") ? `, 00:01:12, ${r.iface}` : ""}`
+              : ` is directly connected, ${r.iface}`;
       return `${pad(code, 9)}${r.prefix}${ad}${tail}`;
     });
   return head + "\n" + lines.join("\n");
@@ -259,6 +266,47 @@ export function showRun(net: Net, dev: string): string {
     for (const x of o.noPassive ?? []) L.push(` no passive-interface ${longIf(x)}`);
     for (const n of o.networks) L.push(` network ${n.ip} ${n.wildcard} area ${n.area}`);
     if (o.defaultOriginate) L.push(` default-information originate${o.defaultOriginate === "always" ? " always" : ""}`);
+    L.push("!");
+  }
+  if (d.bgp) {
+    const b = d.bgp;
+    L.push(`router bgp ${b.asn}`);
+    if (b.routerId) L.push(` bgp router-id ${b.routerId}`);
+    for (const n of b.neighbors) {
+      L.push(` neighbor ${n.ip} remote-as ${n.remoteAs}`);
+      if (n.updateSource) L.push(` neighbor ${n.ip} update-source ${longIf(n.updateSource)}`);
+      if (n.multihop) L.push(` neighbor ${n.ip} ebgp-multihop ${n.multihop}`);
+      if (n.shutdown) L.push(` neighbor ${n.ip} shutdown`);
+    }
+    L.push(" !", " address-family ipv4");
+    for (const pfx of b.networks) {
+      const [ip, len] = pfx.split("/");
+      L.push(`  network ${ip} mask ${dottedMask(Number(len))}`);
+    }
+    for (const r of b.redistribute ?? []) L.push(`  redistribute ${r}${r === "ospf" ? ` ${d.ospf?.pid ?? 1}` : ""}`);
+    for (const n of b.neighbors) {
+      L.push(`  neighbor ${n.ip} activate`);
+      if (n.nextHopSelf) L.push(`  neighbor ${n.ip} next-hop-self`);
+      if (n.weight !== undefined) L.push(`  neighbor ${n.ip} weight ${n.weight}`);
+      if (n.routeMapIn) L.push(`  neighbor ${n.ip} route-map ${n.routeMapIn} in`);
+      if (n.routeMapOut) L.push(`  neighbor ${n.ip} route-map ${n.routeMapOut} out`);
+    }
+    L.push(" exit-address-family", "!");
+  }
+  for (const [name, list] of Object.entries(d.prefixLists ?? {})) {
+    for (const e of list) L.push(`ip prefix-list ${name} seq ${e.seq} ${e.action} ${e.prefix}${e.ge !== undefined ? ` ge ${e.ge}` : ""}${e.le !== undefined ? ` le ${e.le}` : ""}`);
+    L.push("!");
+  }
+  for (const [name, list] of Object.entries(d.routeMaps ?? {})) {
+    for (const e of list) {
+      L.push(`route-map ${name} ${e.action} ${e.seq}`);
+      if (e.matchPrefixList) L.push(` match ip address prefix-list ${e.matchPrefixList}`);
+      if (e.matchAcl) L.push(` match ip address ${e.matchAcl}`);
+      if (e.setLocalPref !== undefined) L.push(` set local-preference ${e.setLocalPref}`);
+      if (e.setWeight !== undefined) L.push(` set weight ${e.setWeight}`);
+      if (e.setMed !== undefined) L.push(` set metric ${e.setMed}`);
+      if (e.setPrepend) L.push(` set as-path prepend ${e.setPrepend.join(" ")}`);
+    }
     L.push("!");
   }
   for (const r of d.routes ?? []) {
@@ -552,4 +600,73 @@ export function showDhcpConflict(net: Net, dev: string): string {
   for (const ip of list) rows.push(`${pad(ip, 18)}${pad("Ping", 19)}Nov 01 2026 10:00 AM`);
   if (!list.length) rows.push("(no conflicts)");
   return rows.join("\n");
+}
+
+// --- BGP ----------------------------------------------------------------------------
+
+export function showBgpSummary(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.bgp) return "% BGP not active";
+  const b = net.bgp();
+  const table = b.tables.get(dev) ?? [];
+  const L = [
+    `BGP router identifier ${b.rid.get(dev) ?? "0.0.0.0"}, local AS number ${d.bgp.asn}`,
+    `BGP table version is ${table.length + 1}, main routing table version ${table.length + 1}`,
+    `${new Set(table.map((p) => p.prefix)).size} network entries using ${new Set(table.map((p) => p.prefix)).size * 112} bytes of memory`,
+    "",
+    "Neighbor        V           AS MsgRcvd MsgSent   TblVer  InQ OutQ Up/Down  State/PfxRcd",
+  ];
+  for (const s of b.sessions.filter((x) => x.dev === dev)) {
+    const pfx = table.filter((p) => s.peerDev && p.fromDev === s.peerDev).length;
+    const st = s.state === "Established" ? String(pfx) : s.state;
+    L.push(`${pad(s.peerIp, 16)}4 ${String(s.remoteAs).padStart(10)} ${String(s.state === "Established" ? 27 : 0).padStart(7)} ${String(s.state === "Established" ? 25 : 0).padStart(7)} ${String(table.length + 1).padStart(8)}    0    0 ${pad(s.state === "Established" ? "00:12:04" : "never", 9)}${st}`);
+  }
+  return L.join("\n");
+}
+
+export function showBgpTable(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.bgp) return "% BGP not active";
+  const b = net.bgp();
+  const table = [...(b.tables.get(dev) ?? [])].sort((x, y) => x.cidr.net - y.cidr.net || x.cidr.len - y.cidr.len || Number(y.best) - Number(x.best));
+  const L = [
+    `BGP table version is ${table.length + 1}, local router ID is ${b.rid.get(dev)}`,
+    "Status codes: * valid, > best, i - internal",
+    "Origin codes: i - IGP, e - EGP, ? - incomplete",
+    "",
+    "     Network          Next Hop            Metric LocPrf Weight Path",
+  ];
+  let last = "";
+  for (const p of table) {
+    const status = `${p.valid ? "*" : " "}${p.best ? ">" : " "}${!p.local && !p.ebgp ? "i" : " "}`;
+    const shown = p.prefix === last ? "" : p.prefix;
+    last = p.prefix;
+    L.push(
+      ` ${pad(status, 4)}${pad(shown, 17)}${pad(p.nextHop, 20)}${String(p.med ?? "").padStart(6)} ${String(p.local || !p.ebgp ? p.localPref : "").padStart(6)} ${String(p.weight).padStart(6)} ${[...p.asPath, p.origin].join(" ")}${p.invalid ? `   (${p.invalid})` : ""}`,
+    );
+  }
+  if (table.length === 0) L.push("(empty: no network statements match the routing table and no paths were received)");
+  const why = table.filter((p) => p.best && p.bestBecause).map((p) => `  ${p.prefix}: best via ${p.nextHop === "0.0.0.0" ? "local" : p.nextHop} because of ${p.bestBecause}`);
+  if (why.length) L.push("", "Best-path decisions:", ...why);
+  return L.join("\n");
+}
+
+export function showBgpNeighbors(net: Net, dev: string, only?: string): string {
+  const d = net.device(dev);
+  if (!d.bgp) return "% BGP not active";
+  const b = net.bgp();
+  const L: string[] = [];
+  const list = b.sessions.filter((x) => x.dev === dev && (!only || x.peerIp === only));
+  if (only && !list.length) return `% No such neighbor or address family`;
+  for (const s of list) {
+    L.push(
+      `BGP neighbor is ${s.peerIp},  remote AS ${s.remoteAs}, ${s.ebgp ? "external" : "internal"} link`,
+      `  BGP version 4, remote router ID ${s.peerDev ? b.rid.get(s.peerDev) : "0.0.0.0"}`,
+      `  BGP state = ${s.state}${s.state === "Established" ? ", up for 00:12:04" : ""}`,
+    );
+    if (s.localIp) L.push(`  Local host: ${s.localIp}, Local port: 179`, `  Foreign host: ${s.peerIp}, Foreign port: 31842`);
+    if (s.why) L.push(`  Reason: ${s.why}`);
+    L.push("");
+  }
+  return L.join("\n") || "(no neighbors configured)";
 }

@@ -788,4 +788,126 @@ scenarios.push(
   },
 );
 
+// --- BGP ------------------------------------------------------------------------------
+//
+//                    ┌── ISPA (AS 65010) ──┐
+//   PC1 ── R1 (AS 65001)                    INET (AS 65100) ── WEB 198.51.100.10
+//   203.0.113.0/24   └── ISPB (AS 65020) ──┘
+
+export function bgpLab(): Topology {
+  return {
+    devices: [
+      host("PC1", "pc", 110, 230, "203.0.113.10/24", "203.0.113.1"),
+      router(
+        "R1",
+        300,
+        230,
+        [{ name: "Gi0/0", ip: "192.0.2.1/30" }, { name: "Gi0/1", ip: "192.0.2.5/30" }, { name: "Gi0/2", ip: "203.0.113.1/24" }, ...down("Gi0/3")],
+        {
+          bgp: {
+            asn: 65001,
+            neighbors: [
+              { ip: "192.0.2.2", remoteAs: 65010 },
+              { ip: "192.0.2.6", remoteAs: 65020 },
+            ],
+            networks: ["203.0.113.0/24"],
+          },
+        },
+      ),
+      router("ISPA", 540, 150, [{ name: "Gi0/0", ip: "192.0.2.2/30" }, { name: "Gi0/1", ip: "100.64.1.1/30" }, ...down("Gi0/2", "Gi0/3")], {
+        bgp: { asn: 65010, neighbors: [{ ip: "192.0.2.1", remoteAs: 65001 }, { ip: "100.64.1.2", remoteAs: 65100 }], networks: [] },
+      }),
+      router("ISPB", 540, 310, [{ name: "Gi0/0", ip: "192.0.2.6/30" }, { name: "Gi0/1", ip: "100.64.2.1/30" }, ...down("Gi0/2", "Gi0/3")], {
+        bgp: { asn: 65020, neighbors: [{ ip: "192.0.2.5", remoteAs: 65001 }, { ip: "100.64.2.2", remoteAs: 65100 }], networks: [] },
+      }),
+      router("INET", 780, 230, [{ name: "Gi0/0", ip: "100.64.1.2/30" }, { name: "Gi0/1", ip: "100.64.2.2/30" }, { name: "Gi0/2", ip: "198.51.100.1/24" }, ...down("Gi0/3")], {
+        bgp: { asn: 65100, neighbors: [{ ip: "100.64.1.1", remoteAs: 65010 }, { ip: "100.64.2.1", remoteAs: 65020 }], networks: ["198.51.100.0/24"] },
+      }),
+      host("WEB", "server", 990, 230, "198.51.100.10/24", "198.51.100.1"),
+    ],
+    links: [
+      { a: ["PC1", "eth0"], b: ["R1", "Gi0/2"] },
+      { a: ["R1", "Gi0/0"], b: ["ISPA", "Gi0/0"] },
+      { a: ["R1", "Gi0/1"], b: ["ISPB", "Gi0/0"] },
+      { a: ["ISPA", "Gi0/1"], b: ["INET", "Gi0/0"] },
+      { a: ["ISPB", "Gi0/1"], b: ["INET", "Gi0/1"] },
+      { a: ["INET", "Gi0/2"], b: ["WEB", "eth0"] },
+    ],
+    notes: [{ id: "note-ent", kind: "rect", x: 50, y: 160, w: 330, h: 150, text: "Enterprise · AS 65001" }],
+  };
+}
+
+function bgpTweak(fn: (t: Topology) => void): Topology {
+  const t = bgpLab();
+  fn(t);
+  return t;
+}
+const webReach: Scenario["goals"][number] = { type: "reach", from: "PC1", to: "198.51.100.10", expect: true, label: "PC1 reaches WEB across the Internet" };
+
+scenarios.push(
+  {
+    id: "bgp",
+    title: "Dual-homed eBGP example",
+    exam: "encor",
+    objective: "3.2.c",
+    kind: "sandbox",
+    brief:
+      "An enterprise in AS 65001 dual-homed to two ISPs, which both peer with an 'Internet' AS that hosts WEB. Try `show ip bgp summary` and `show ip bgp` on R1: two paths to 198.51.100.0/24, and the output says which best-path step chose the winner. Then shut one ISP link and ping again.",
+    topology: bgpLab(),
+    goals: [],
+  },
+  {
+    id: "bgp-remote-as",
+    title: "One ISP session never comes up",
+    exam: "encor",
+    objective: "3.2.c",
+    kind: "challenge",
+    brief: "Ticket #10002: monitoring says the BGP session from R1 to ISP-A has been down since the circuit was handed over. ISP-B works, so users haven't noticed yet.",
+    hint: "`show ip bgp summary` shows the state. `show ip bgp neighbors` and the console log say why a session is reset.",
+    debrief:
+      "R1 had `neighbor 192.0.2.2 remote-as 65011` but ISP-A is AS 65010. When the OPEN message arrives with a different AS, BGP sends NOTIFICATION 2/2 (peer in wrong AS) and the session drops back to Idle/Active. remote-as must be the neighbour's AS, and both sides must agree.",
+    topology: bgpTweak((t) => (dev(t, "R1").bgp!.neighbors[0].remoteAs = 65011)),
+    goals: [{ type: "bgpUp", device: "R1", neighbor: "192.0.2.2", label: "R1 ↔ ISP-A session is Established" }, webReach],
+  },
+  {
+    id: "bgp-network",
+    title: "We can reach out, nobody can reach in",
+    exam: "encor",
+    objective: "3.2.c",
+    kind: "challenge",
+    brief: "Ticket #10009: after a 'cleanup' of R1's BGP config, our users can't load anything on the Internet. Both BGP sessions are Established.",
+    hint: "Check whether R1 is actually advertising our prefix: `show ip bgp` on R1, then on INET. What does `network … mask …` require?",
+    debrief:
+      "R1 had `network 203.0.113.0 mask 255.255.0.0`, a /16. BGP only originates a network when that exact prefix and mask are in the routing table, and R1 only has 203.0.113.0/24. Nothing was advertised, so WEB's replies had no route back.",
+    topology: bgpTweak((t) => (dev(t, "R1").bgp!.networks = ["203.0.0.0/16"])),
+    goals: [{ type: "route", device: "INET", prefix: "203.0.113.0/24", code: "B", expect: true, label: "INET has a BGP route to 203.0.113.0/24" }, webReach],
+  },
+  {
+    id: "bgp-outbound",
+    title: "Send our traffic via ISP-B",
+    exam: "encor",
+    objective: "3.2.c",
+    kind: "challenge",
+    brief: "Change #10015: ISP-A charges per gigabyte. All outbound Internet traffic from AS 65001 should leave through ISP-B, keeping ISP-A as backup.",
+    hint: "Outbound path selection is decided by R1's own best-path choice. Which attributes does R1 evaluate before AS-path length? (Weight is local to one router; local preference covers the whole AS.)",
+    debrief:
+      "A route-map on routes from ISP-B with `set local-preference 200` (or a higher `neighbor … weight` on R1) makes R1 prefer ISP-B, since those attributes come before AS-path length in best-path selection. Local preference is the standard choice because it is shared with every router in the AS.",
+    topology: bgpLab(),
+    goals: [{ type: "bgpBest", device: "R1", prefix: "198.51.100.0/24", nextHop: "192.0.2.6", label: "R1's best path to 198.51.100.0/24 is via ISP-B (192.0.2.6)" }, webReach],
+  },
+  {
+    id: "bgp-inbound",
+    title: "Make the Internet come in via ISP-B",
+    exam: "encor",
+    objective: "3.2.c",
+    kind: "challenge",
+    brief: "Change #10021: return traffic to 203.0.113.0/24 should also arrive through ISP-B. We don't control INET, but we control what we advertise.",
+    hint: "Local preference and weight only change your own decisions. To influence other ASes, make the path through ISP-A look worse to them.",
+    debrief:
+      "AS-path prepending on the advertisement to ISP-A (`set as-path prepend 65001 65001` in a route-map applied `out` to 192.0.2.2) makes that path longer, so INET prefers the path through ISP-B. It's a request, not a command: other ASes can override it with their own local preference.",
+    topology: bgpLab(),
+    goals: [{ type: "bgpBest", device: "INET", prefix: "203.0.113.0/24", nextHop: "100.64.2.1", label: "INET reaches 203.0.113.0/24 via ISP-B (100.64.2.1)" }, webReach],
+  },
+);
+
 export const scenarioById = Object.fromEntries(scenarios.map((s) => [s.id, s]));

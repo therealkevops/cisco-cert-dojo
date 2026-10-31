@@ -98,6 +98,14 @@ const fixes = {
   "dhcp-relay": (t) => (t.devices.find((d) => d.id === "BR").ports.find((p) => p.name === "Gi0/1").helpers = ["10.0.0.1"]),
   "dhcp-gateway": (t) => (t.devices.find((d) => d.id === "HQ").dhcp.pools[0].gateway = "10.10.0.1"),
   "dhcp-pool": (t) => (t.devices.find((d) => d.id === "HQ").dhcp.pools[1].network = "10.20.0.0/24"),
+  "bgp-remote-as": (t) => (t.devices.find((d) => d.id === "R1").bgp.neighbors[0].remoteAs = 65010),
+  "bgp-network": (t) => (t.devices.find((d) => d.id === "R1").bgp.networks = ["203.0.113.0/24"]),
+  "bgp-outbound": (t) => (t.devices.find((d) => d.id === "R1").bgp.neighbors[1].weight = 100),
+  "bgp-inbound": (t) => {
+    const r1 = t.devices.find((d) => d.id === "R1");
+    r1.routeMaps = { PREPEND: [{ seq: 10, action: "permit", setPrepend: [65001, 65001] }] };
+    r1.bgp.neighbors[0].routeMapOut = "PREPEND";
+  },
 };
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
@@ -142,7 +150,21 @@ const cliFixes = {
   "dhcp-relay": [["BR", "en", "conf t", "int g0/1", "ip helper-address 10.0.0.1", "end"]],
   "dhcp-gateway": [["HQ", "en", "conf t", "ip dhcp pool LAN-A", "default-router 10.10.0.1", "end"]],
   "dhcp-pool": [["HQ", "en", "conf t", "ip dhcp pool LAN-B", "no network", "network 10.20.0.0 255.255.255.0", "end"]],
+  "bgp-remote-as": [["R1", "en", "conf t", "router bgp 65001", "neighbor 192.0.2.2 remote-as 65010", "end"]],
+  "bgp-network": [["R1", "en", "conf t", "router bgp 65001", "no network 203.0.0.0 mask 255.255.0.0", "network 203.0.113.0 mask 255.255.255.0", "end"]],
+  "bgp-outbound": [["R1", "en", "conf t", "route-map PREFER-B permit 10", "set local-preference 200", "exit", "router bgp 65001", "address-family ipv4", "neighbor 192.0.2.6 route-map PREFER-B in", "end"]],
+  "bgp-inbound": [["R1", "en", "conf t", "route-map PREPEND permit 10", "set as-path prepend 65001 65001", "exit", "router bgp 65001", "neighbor 192.0.2.2 route-map PREPEND out", "end"]],
 };
+// BGP example: all sessions up, both paths present, end-to-end reachability.
+{
+  const n = new Net(scenarios.find((s) => s.id === "bgp").topology);
+  const down = n.bgp().sessions.filter((x) => x.state !== "Established");
+  if (down.length) fail(`wire bgp: sessions not up: ${down.map((x) => `${x.dev}->${x.peerIp} ${x.state} ${x.why}`).join("; ")}`);
+  const paths = (n.bgp().tables.get("R1") ?? []).filter((p) => p.prefix === "198.51.100.0/24");
+  if (paths.length !== 2) fail(`wire bgp: R1 should see two paths to 198.51.100.0/24, sees ${paths.length}`);
+  n.ping("PC1", "198.51.100.10", 8);
+  if (!n.ping("PC1", "198.51.100.10", 2).probes.every((p) => p.mark === "!")) fail("wire bgp: PC1 can't reach WEB");
+}
 // NAT and DHCP examples must work end to end.
 {
   const nat = new Net(scenarios.find((s) => s.id === "nat").topology);

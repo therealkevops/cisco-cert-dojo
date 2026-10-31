@@ -3,6 +3,9 @@ import { dhcpRequest, type DhcpLease } from "./dhcp";
 import { inCidr, parseCidr } from "./ip";
 import type { Goal, Topology } from "./types";
 
+// Enough warm-up probes for ARP to settle on every hop, including asymmetric return paths.
+const WARM = 8;
+
 export type GoalResult = { goal: Goal; ok: boolean; detail: string };
 
 /** Outcome-based grading: any configuration that produces the right behaviour passes. */
@@ -32,7 +35,7 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
       return { goal, ok: !!r === goal.expect, detail: r ? `${goal.device} has ${r.code} ${r.prefix}` : `${goal.device} has no ${goal.code ?? ""} route for ${goal.prefix}`.replace("  ", " ") };
     }
     if (goal.type === "reachAll") {
-      for (const [from, to] of goal.pairs) net.ping(from, to, 2);
+      for (const [from, to] of goal.pairs) net.ping(from, to, WARM);
       for (const [from, to] of goal.pairs) {
         const r = net.ping(from, to, 2);
         if (!r.probes.some((p) => p.mark === "!")) return { goal, ok: false, detail: r.error ?? `${from} → ${to}: ${r.probes.map((p) => p.mark).join("")}` };
@@ -40,7 +43,7 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
       return { goal, ok: true, detail: "all pairs reachable together" };
     }
     if (goal.type === "natVia") {
-      net.ping(goal.from, goal.to, 2);
+      net.ping(goal.from, goal.to, WARM);
       const r = net.ping(goal.from, goal.to, 2);
       const local = net.l3Ifs(goal.from)[0]?.cidr.ip;
       const e = (net.natTables.get(goal.device) ?? []).find((x) => x.insideLocal === local);
@@ -55,12 +58,20 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
       if (!goal.to) return { goal, ok: true, detail: `${goal.host} leased ${l.ip}` };
       const t = applyLease(topo, goal.host, l);
       const n2 = new Net(t, net);
-      n2.ping(goal.host, goal.to, 2);
+      n2.ping(goal.host, goal.to, WARM);
       const r = n2.ping(goal.host, goal.to, 2);
       return { goal, ok: r.probes.some((p) => p.mark === "!"), detail: r.error ?? `${goal.host} (${l.ip}) → ${goal.to}: ${r.probes.map((p) => p.mark).join("")}` };
     }
+    if (goal.type === "bgpUp") {
+      const ses = net.bgp().sessions.find((x) => x.dev === goal.device && x.peerIp === goal.neighbor);
+      return { goal, ok: ses?.state === "Established", detail: !ses ? `${goal.device} has no neighbor ${goal.neighbor}` : ses.state === "Established" ? "Established" : `${ses.state}: ${ses.why}` };
+    }
+    if (goal.type === "bgpBest") {
+      const best = (net.bgp().tables.get(goal.device) ?? []).find((p) => p.prefix === goal.prefix && p.best);
+      return { goal, ok: best?.nextHop === goal.nextHop, detail: best ? `best path for ${goal.prefix} is via ${best.nextHop}${best.bestBecause ? ` (${best.bestBecause})` : ""}` : `${goal.device} has no BGP path for ${goal.prefix}` };
+    }
     // Warm-up ping first, then judge on a second run, as an engineer would.
-    net.ping(goal.from, goal.to, 2);
+    net.ping(goal.from, goal.to, WARM);
     const r = net.ping(goal.from, goal.to, 3);
     const success = r.probes.some((p) => p.mark === "!");
     const marks = r.probes.map((p) => p.mark).join("") || "error";
