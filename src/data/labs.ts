@@ -454,6 +454,195 @@ QoS-Group#  Bandwidth%  PrioLevel    Shape                   QLimit
       },
     ],
   },
+  {
+    id: "roce-classify",
+    exam: "dcai",
+    objective: "3.1.c",
+    title: "Classify RoCE and CNP traffic on a GPU-facing port",
+    hostname: "LEAF1",
+    platform: "nx-os",
+    brief:
+      "The GPU NICs mark RoCE data with DSCP 24 or 26 and CNPs with DSCP 48. Classify them into qos-group 3 (no-drop) and qos-group 7 (priority), apply the policy inbound on Ethernet1/1, and give the port a 9216 MTU.",
+    topology: `  GPU NIC ── DSCP 24/26 (RoCE) · DSCP 48 (CNP) ──▶ Eth1/1 [LEAF1]
+                       qos-group 3        qos-group 7`,
+    steps: [
+      conft,
+      { task: "Create class-map ROCE (type qos, match-all).", cmd: "class-map type qos match-all ROCE", accept: ["class-m|ap ty|pe qos (match-all) ROCE"], enters: "config-cmap-qos", hint: "class-map type qos match-all ROCE" },
+      { task: "Match DSCP 24 and 26.", cmd: "match dscp 24,26", accept: ["mat|ch dscp 24,26", "mat|ch dscp 26,24"], hint: "match dscp 24,26" },
+      exit,
+      { task: "Create class-map CNP (type qos, match-all).", cmd: "class-map type qos match-all CNP", accept: ["class-m|ap ty|pe qos (match-all) CNP"], enters: "config-cmap-qos", hint: "class-map type qos match-all CNP" },
+      { task: "Match DSCP 48.", cmd: "match dscp 48", accept: ["mat|ch dscp 48"], hint: "match dscp 48" },
+      exit,
+      { task: "Create the classification policy RoCE-QOS.", cmd: "policy-map type qos RoCE-QOS", accept: ["policy-m|ap ty|pe qos RoCE-QOS"], enters: "config-pmap-qos", hint: "policy-map type qos RoCE-QOS" },
+      { task: "Select class ROCE.", cmd: "class ROCE", accept: ["cla|ss ROCE"], enters: "config-pmap-c-qos", hint: "class ROCE" },
+      { task: "Put it in qos-group 3.", cmd: "set qos-group 3", accept: ["set qos-g|roup 3"], hint: "set qos-group 3" },
+      exit,
+      { task: "Select class CNP.", cmd: "class CNP", accept: ["cla|ss CNP"], enters: "config-pmap-c-qos", hint: "class CNP" },
+      { task: "Put it in qos-group 7.", cmd: "set qos-group 7", accept: ["set qos-g|roup 7"], hint: "set qos-group 7" },
+      exit,
+      exit,
+      { task: "Go to the GPU-facing port.", cmd: "interface Ethernet1/1", accept: ["int|erface <if:eth1/1>"], enters: "config-if", hint: "interface ethernet1/1" },
+      { task: "Jumbo MTU.", cmd: "mtu 9216", accept: ["mtu 9216"], hint: "mtu 9216" },
+      { task: "Apply RoCE-QOS inbound.", cmd: "service-policy type qos input RoCE-QOS", accept: ["serv|ice-policy ty|pe qos in|put RoCE-QOS"], hint: "service-policy type qos input RoCE-QOS" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow policy-map int|erface <rest>",
+        output: `Global statistics status :   enabled
+
+Ethernet1/1
+
+  Service-policy (qos) input:   RoCE-QOS
+
+    Class-map (qos):   ROCE (match-all)
+      Slot 1
+        9182736 packets
+      Match: dscp 24,26
+      set qos-group 3
+
+    Class-map (qos):   CNP (match-all)
+      Slot 1
+        10482 packets
+      Match: dscp 48
+      set qos-group 7
+
+    Class-map (qos):   class-default (match-any)
+      Slot 1
+        2231 packets`,
+      },
+    ],
+  },
+  {
+    id: "pfc-watchdog",
+    exam: "dcai",
+    objective: "4.4",
+    title: "Contain PFC storms with the watchdog",
+    hostname: "LEAF2",
+    platform: "nx-os",
+    brief:
+      "Last week a failed NIC sent pause frames non-stop and froze the no-drop class across the pod. Enable the PFC watchdog globally, and shut a stuck queue after 5 watchdog intervals. Then check the result.",
+    topology: `  stuck NIC ══ PAUSE PAUSE PAUSE ══▶ Eth1/12 [LEAF2] ══▶ spines (congestion spreads)`,
+    steps: [
+      conft,
+      { task: "Turn on the PFC watchdog globally.", cmd: "priority-flow-control watch-dog-interval on", accept: ["prio|rity-flow-control watch-dog-i|nterval on"], hint: "priority-flow-control watch-dog-interval on" },
+      { task: "Shut a stuck queue after 5 intervals.", cmd: "priority-flow-control watch-dog shutdown-multiplier 5", accept: ["prio|rity-flow-control watch-dog shut|down-multiplier 5"], hint: "priority-flow-control watch-dog shutdown-multiplier 5" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow queu|ing pfc-q|ueue (det|ail)",
+        output: `+----------------------------------------------------+
+Global watch-dog interval [Enabled]
+Global PFC watchdog shutdown-multiplier [5]
++----------------------------------------------------+
+
++----------------------------------------------------+
+|  Port PFC Watchdog (VL bmap)        | Enabled (0x8)
++----------------------------------------------------+
+| Ethernet1/12  QOS GROUP 3    [Active]  PFC [YES]   PFC-COS [3]
+|   Stomped packets   |   0
+|   Shutdown events   |   1
+|   Restore events    |   1`,
+      },
+    ],
+  },
+  {
+    id: "ecmp-hash",
+    exam: "dcai",
+    objective: "3.1.d",
+    title: "Add L4 entropy to fabric ECMP hashing",
+    hostname: "LEAF3",
+    platform: "nx-os",
+    brief:
+      "Two of LEAF3's four spine uplinks run hot while the other two idle. RoCEv2 flows between the same hosts differ only in their UDP source port, so hash on Layer 4 ports as well as IP addresses. Set the uplink range Ethernet1/49-52 to MTU 9216 while you are there.",
+    topology: `             SPINE1  SPINE2  SPINE3  SPINE4
+               98%     3%     98%     3%
+                 \\      |      |      /
+                  Eth1/49-52 [LEAF3]`,
+    steps: [
+      conft,
+      { task: "Hash on source/destination IP and L4 ports.", cmd: "ip load-sharing address source-destination port source-destination", accept: ["ip load-sh|aring add|ress source-d|estination port source-d|estination"], hint: "ip load-sharing address source-destination port source-destination" },
+      { task: "Select the four uplinks at once.", cmd: "interface Ethernet1/49-52", accept: ["int|erface ethernet1/49-52", "int|erface ethernet 1/49-52", "int|erface eth1/49-52", "int|erface eth 1/49-52", "int|erface e1/49-52", "int|erface e 1/49-52"], enters: "config-if-range", hint: "interface ethernet1/49-52" },
+      { task: "Jumbo MTU on the uplinks.", cmd: "mtu 9216", accept: ["mtu 9216"], hint: "mtu 9216" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ip load-sh|aring",
+        output: `IPv4/IPv6 ECMP load sharing:
+Universal-id (Random Seed): 3735928559
+Load-share mode : address source-destination port source-destination
+GRE-Outer hash is disabled
+Concatenation is disabled
+Rotate: 32`,
+      },
+    ],
+  },
+  {
+    id: "fabric-telemetry",
+    exam: "dcai",
+    objective: "4.3",
+    title: "Stream interface telemetry to a collector",
+    hostname: "LEAF1",
+    platform: "nx-os",
+    brief:
+      "Polling every 5 minutes hides microbursts. Stream the interface tree (sys/intf) every 10 seconds with gRPC and GPB encoding to the collector at 10.0.0.50 port 57000.",
+    topology: `  [LEAF1] ── gRPC/GPB every 10 s ──▶ collector 10.0.0.50:57000`,
+    steps: [
+      conft,
+      { task: "Enable the telemetry feature.", cmd: "feature telemetry", accept: ["fea|ture tele|metry"], hint: "feature telemetry" },
+      { task: "Enter telemetry configuration.", cmd: "telemetry", accept: ["tele|metry"], enters: "config-telemetry", hint: "telemetry" },
+      { task: "Create destination group 1.", cmd: "destination-group 1", accept: ["dest|ination-group 1"], enters: "conf-tm-dest", hint: "destination-group 1" },
+      { task: "Point it at the collector (gRPC, GPB).", cmd: "ip address 10.0.0.50 port 57000 protocol gRPC encoding GPB", accept: ["ip add|ress 10.0.0.50 port 57000 prot|ocol grpc enc|oding gpb"], hint: "ip address 10.0.0.50 port 57000 protocol gRPC encoding GPB" },
+      exit,
+      { task: "Create sensor group 1.", cmd: "sensor-group 1", accept: ["sens|or-group 1"], enters: "conf-tm-sensor", hint: "sensor-group 1" },
+      { task: "Use the DME data source.", cmd: "data-source DME", accept: ["data-s|ource dme"], hint: "data-source DME" },
+      { task: "Stream the whole interface tree.", cmd: "path sys/intf depth unbounded", accept: ["path sys/intf (depth unbounded)"], hint: "path sys/intf depth unbounded" },
+      exit,
+      { task: "Create subscription 1.", cmd: "subscription 1", accept: ["subs|cription 1"], enters: "conf-tm-sub", hint: "subscription 1" },
+      { task: "Send it to destination group 1.", cmd: "dst-grp 1", accept: ["dst-grp 1"], hint: "dst-grp 1" },
+      { task: "Sample sensor group 1 every 10 seconds (10000 ms).", cmd: "snsr-grp 1 sample-interval 10000", accept: ["snsr-grp 1 sample-i|nterval 10000"], hint: "snsr-grp 1 sample-interval 10000" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow tele|metry trans|port",
+        output: `Session Id      IP Address      Port       Encoding   Transport  Status
+-----------------------------------------------------------------------------------
+0               10.0.0.50       57000      GPB        gRPC       Connected`,
+      },
+    ],
+  },
+  {
+    id: "time-and-logs",
+    exam: "dcai",
+    objective: "4.3",
+    title: "Time and logging for cross-device log correlation",
+    hostname: "LEAF1",
+    platform: "nx-os",
+    brief:
+      "Logs from switches, servers and GPUs can't be lined up because LEAF1's clock drifts. Sync to NTP server 10.0.0.1 and send severity 5 and above to syslog server 10.0.0.60, both through the management VRF, with millisecond timestamps.",
+    topology: `  [LEAF1] mgmt0 ── NTP 10.0.0.1 · syslog 10.0.0.60`,
+    steps: [
+      conft,
+      { task: "Use NTP server 10.0.0.1 via the management VRF.", cmd: "ntp server 10.0.0.1 use-vrf management", accept: ["ntp ser|ver 10.0.0.1 use-v|rf man|agement"], hint: "ntp server 10.0.0.1 use-vrf management" },
+      { task: "Send severity 5 (notifications) and above to 10.0.0.60 via management.", cmd: "logging server 10.0.0.60 5 use-vrf management", accept: ["logg|ing ser|ver 10.0.0.60 5 use-v|rf man|agement"], hint: "logging server 10.0.0.60 5 use-vrf management" },
+      { task: "Millisecond timestamps on log messages.", cmd: "logging timestamp milliseconds", accept: ["logg|ing time|stamp milli|seconds"], hint: "logging timestamp milliseconds" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ntp peer-s|tatus",
+        output: `Total peers : 1
+* - selected for sync, + -  peer mode(active),
+- - peer mode(passive), = - polled in client mode
+    remote                                 local                                   st   poll   reach delay   vrf
+-----------------------------------------------------------------------------------------------------------------------
+*10.0.0.1                                 0.0.0.0                                  2   64     377   0.00041 management`,
+      },
+    ],
+  },
 ];
 
 export const labById = Object.fromEntries(labs.map((l) => [l.id, l]));
