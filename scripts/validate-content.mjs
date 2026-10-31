@@ -91,6 +91,13 @@ const fixes = {
   "lacp-passive": (t) => t.devices.find((d) => d.id === "SW1").ports.forEach((p) => p.channel && (p.channel.mode = "active")),
   "lacp-on": (t) => t.devices.find((d) => d.id === "SW1").ports.forEach((p) => p.channel && (p.channel.mode = "active")),
   "po-access": (t) => (t.devices.find((d) => d.id === "SW2").portChannels[0].mode = "trunk"),
+  "nat-outside": (t) => (t.devices.find((d) => d.id === "R1").ports.find((p) => p.name === "Gi0/0").nat = "outside"),
+  "nat-acl": (t) => (t.devices.find((d) => d.id === "R1").acls["1"][0].src = "10.0.0.0/24"),
+  "nat-static": (t) => t.devices.find((d) => d.id === "R1").nat.rules.push({ kind: "static", local: "10.0.0.50", global: "203.0.113.50" }),
+  "nat-pool": (t) => (t.devices.find((d) => d.id === "R1").nat.rules[0].overload = true),
+  "dhcp-relay": (t) => (t.devices.find((d) => d.id === "BR").ports.find((p) => p.name === "Gi0/1").helpers = ["10.0.0.1"]),
+  "dhcp-gateway": (t) => (t.devices.find((d) => d.id === "HQ").dhcp.pools[0].gateway = "10.10.0.1"),
+  "dhcp-pool": (t) => (t.devices.find((d) => d.id === "HQ").dhcp.pools[1].network = "10.20.0.0/24"),
 };
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
@@ -128,7 +135,29 @@ const cliFixes = {
   "lacp-passive": [["SW1", "en", "conf t", "int range g1/0/23 - 24", "channel-group 1 mode active", "end"]],
   "lacp-on": [["SW1", "en", "conf t", "int range gi1/0/23-24", "no channel-group", "channel-group 1 mode active", "end"]],
   "po-access": [["SW2", "en", "conf t", "int po1", "sw mode trunk", "end"]],
+  "nat-outside": [["R1", "en", "conf t", "int g0/0", "ip nat outside", "end"]],
+  "nat-acl": [["R1", "en", "conf t", "no access-list 1", "access-list 1 permit 10.0.0.0 0.0.0.255", "end"]],
+  "nat-static": [["R1", "en", "conf t", "ip nat inside source static 10.0.0.50 203.0.113.50", "end"]],
+  "nat-pool": [["R1", "en", "conf t", "ip nat inside source list 1 pool PUBLIC overload", "end"]],
+  "dhcp-relay": [["BR", "en", "conf t", "int g0/1", "ip helper-address 10.0.0.1", "end"]],
+  "dhcp-gateway": [["HQ", "en", "conf t", "ip dhcp pool LAN-A", "default-router 10.10.0.1", "end"]],
+  "dhcp-pool": [["HQ", "en", "conf t", "ip dhcp pool LAN-B", "no network", "network 10.20.0.0 255.255.255.0", "end"]],
 };
+// NAT and DHCP examples must work end to end.
+{
+  const nat = new Net(scenarios.find((s) => s.id === "nat").topology);
+  for (const h of ["PC1", "PC2"]) {
+    nat.ping(h, "198.51.100.10", 2);
+    if (!nat.ping(h, "198.51.100.10", 2).probes.every((p) => p.mark === "!")) fail(`wire nat: ${h} can't reach WEB`);
+  }
+  if ((nat.natTables.get("R1") ?? []).filter((e) => e.kind === "pat").length !== 2) fail("wire nat: expected two PAT entries on R1");
+  const dl = scenarios.find((s) => s.id === "dhcp").topology;
+  const g = gradeGoals(dl, [
+    { type: "dhcp", host: "PCA1", within: "10.10.0.0/24", to: "10.20.0.1", label: "a" },
+    { type: "dhcp", host: "PCB1", within: "10.20.0.0/24", to: "10.10.0.11", label: "b" },
+  ]);
+  for (const r of g) if (!r.ok) fail(`wire dhcp example: ${r.detail}`);
+}
 // EtherChannel example: bundle formed on both sides, and it survives losing a member.
 {
   const ex = scenarios.find((s) => s.id === "lag");

@@ -547,4 +547,245 @@ scenarios.push(
   },
 );
 
+// --- NAT ------------------------------------------------------------------------------
+//
+//   PC1 ─┐
+//   PC2 ─┼─ SW1 ── R1 (Gi0/1 inside 10.0.0.1 | Gi0/0 outside 203.0.113.2) ── ISP ── WEB 198.51.100.10
+//   SRV ─┘                                                                 (no route to 10/8)
+
+const router = (id: string, x: number, y: number, ports: Port[], extra: Partial<Device> = {}): Device => ({ id, kind: "router", x, y, ports, ...extra });
+const down = (...names: string[]): Port[] => names.map((name) => ({ name, shutdown: true }));
+const sw = (id: string, x: number, y: number, n = 24): Device => ({ id, kind: "switch", x, y, ports: Array.from({ length: n }, (_, i) => ({ name: `Gi1/0/${i + 1}`, mode: "access" as const, vlan: 1 })) });
+
+export function natLab(): Topology {
+  return {
+    devices: [
+      host("PC1", "pc", 140, 130, "10.0.0.11/24", "10.0.0.1"),
+      host("PC2", "pc", 140, 290, "10.0.0.12/24", "10.0.0.1"),
+      host("SRV", "server", 140, 450, "10.0.0.50/24", "10.0.0.1"),
+      sw("SW1", 330, 290, 8),
+      router(
+        "R1",
+        530,
+        290,
+        [{ name: "Gi0/0", ip: "203.0.113.2/24", nat: "outside" }, { name: "Gi0/1", ip: "10.0.0.1/24", nat: "inside" }, ...down("Gi0/2", "Gi0/3")],
+        {
+          routes: [{ prefix: "0.0.0.0/0", via: "203.0.113.1" }],
+          acls: { "1": [{ action: "permit", proto: "ip", src: "10.0.0.0/24", dst: "any" }] },
+          nat: { rules: [{ kind: "dynamic", acl: "1", iface: "Gi0/0", overload: true }], pools: [] },
+        },
+      ),
+      router("ISP", 740, 290, [{ name: "Gi0/0", ip: "203.0.113.1/24" }, { name: "Gi0/1", ip: "198.51.100.1/24" }, ...down("Gi0/2", "Gi0/3")]),
+      host("WEB", "server", 940, 290, "198.51.100.10/24", "198.51.100.1"),
+    ],
+    links: [
+      { a: ["PC1", "eth0"], b: ["SW1", "Gi1/0/1"] },
+      { a: ["PC2", "eth0"], b: ["SW1", "Gi1/0/2"] },
+      { a: ["SRV", "eth0"], b: ["SW1", "Gi1/0/3"] },
+      { a: ["SW1", "Gi1/0/8"], b: ["R1", "Gi0/1"] },
+      { a: ["R1", "Gi0/0"], b: ["ISP", "Gi0/0"] },
+      { a: ["ISP", "Gi0/1"], b: ["WEB", "eth0"] },
+    ],
+    notes: [
+      { id: "note-in", kind: "rect", x: 70, y: 50, w: 560, h: 470, text: "Inside · private 10.0.0.0/24" },
+      { id: "note-out", kind: "rect", x: 650, y: 190, w: 390, h: 200, text: "Outside · Internet" },
+    ],
+  };
+}
+
+function natTweak(fn: (t: Topology) => void): Topology {
+  const t = natLab();
+  fn(t);
+  return t;
+}
+const natGoals: Scenario["goals"] = [
+  { type: "natVia", from: "PC1", to: "198.51.100.10", device: "R1", label: "PC1 reaches WEB, translated by R1" },
+  { type: "natVia", from: "PC2", to: "198.51.100.10", device: "R1", label: "PC2 reaches WEB, translated by R1" },
+];
+
+scenarios.push(
+  {
+    id: "nat",
+    title: "NAT/PAT example",
+    exam: "encor",
+    objective: "3.3.b",
+    kind: "sandbox",
+    brief:
+      "An edge router translating a private LAN to its single public address (PAT). The ISP has no route back to 10.0.0.0/8, just like the real Internet. Ping WEB from PC1 and PC2, then run `show ip nat translations` on R1 and step through the packet walk to see when the translation happens.",
+    topology: natLab(),
+    goals: [],
+  },
+  {
+    id: "nat-outside",
+    title: "Nobody can reach the Internet",
+    exam: "encor",
+    objective: "3.3.b",
+    kind: "challenge",
+    brief: "Ticket #8004: R1 was replaced last night and the config restored from a backup. Inside users reach R1 but nothing beyond it.",
+    hint: "Follow a ping in the packet walk: does R1 translate the source? `show ip nat statistics` lists inside and outside interfaces.",
+    debrief:
+      "Gi0/0 was missing `ip nat outside`. NAT only translates traffic that moves from an inside interface to an outside one, so packets left with private source addresses and the ISP dropped the replies (it has no route to 10.0.0.0/8).",
+    topology: natTweak((t) => delete dev(t, "R1").ports.find((p) => p.name === "Gi0/0")!.nat),
+    goals: natGoals,
+  },
+  {
+    id: "nat-acl",
+    title: "The ACL that matches nothing",
+    exam: "encor",
+    objective: "3.3.b",
+    kind: "challenge",
+    brief: "Ticket #8011: after the LAN was renumbered, Internet access stopped. The NAT rule and interfaces look right.",
+    hint: "NAT uses an ACL to choose which inside sources to translate. What does access-list 1 match today?",
+    debrief:
+      "access-list 1 still permitted the old subnet 10.0.1.0/24, so no inside host matched the NAT rule and traffic left untranslated. Packets that don't match a NAT ACL aren't dropped, they just aren't translated, which is why this fails silently.",
+    topology: natTweak((t) => (dev(t, "R1").acls!["1"] = [{ action: "permit", proto: "ip", src: "10.0.1.0/24", dst: "any" }])),
+    goals: natGoals,
+  },
+  {
+    id: "nat-static",
+    title: "Publish the inside server",
+    exam: "encor",
+    objective: "3.3.b",
+    kind: "challenge",
+    brief: "Change #8020: partners on the Internet (WEB) must reach the inside server SRV (10.0.0.50) at public address 203.0.113.50. Users' Internet access must keep working.",
+    hint: "PAT only creates translations for traffic started from the inside. For traffic started from the outside you need a permanent one-to-one mapping.",
+    debrief:
+      "`ip nat inside source static 10.0.0.50 203.0.113.50` creates a permanent mapping, so outside hosts can start connections to 203.0.113.50. R1 also answers ARP for 203.0.113.50 on its outside interface, which is why the ISP can deliver packets to an address no interface is configured with.",
+    topology: natLab(),
+    goals: [{ type: "reach", from: "WEB", to: "203.0.113.50", expect: true, label: "WEB reaches SRV at 203.0.113.50" }, natGoals[0]],
+  },
+  {
+    id: "nat-pool",
+    title: "Second user, no Internet",
+    exam: "encor",
+    objective: "3.3.b",
+    kind: "challenge",
+    brief: "Ticket #8027: whichever inside user goes online first works fine. Everyone after that gets nothing. The ISP gave us only one public address for user traffic, 203.0.113.10.",
+    hint: "`show ip nat statistics` shows the pool usage and misses. How many inside hosts can a one-address pool serve without port translation?",
+    debrief:
+      "Dynamic NAT without `overload` maps one inside host to one global address. With a one-address pool, the second host can't be translated and its packets are dropped. Adding `overload` turns it into PAT, so many hosts share the address using different identifiers.",
+    topology: natTweak((t) => {
+      dev(t, "R1").nat = { rules: [{ kind: "dynamic", acl: "1", pool: "PUBLIC", overload: false }], pools: [{ name: "PUBLIC", start: "203.0.113.10", end: "203.0.113.10", len: 24 }] };
+    }),
+    goals: [
+      {
+        type: "reachAll",
+        pairs: [
+          ["PC1", "198.51.100.10"],
+          ["PC2", "198.51.100.10"],
+        ],
+        label: "PC1 and PC2 reach WEB at the same time",
+      },
+    ],
+  },
+);
+
+// --- DHCP -----------------------------------------------------------------------------
+//
+//   PCA1 ─┐                                                      ┌─ PCB1
+//   PCA2 ─┼─ SWA ── HQ (DHCP server) ── 10.0.0.0/30 ── BR (relay) ── SWB ─┴─ PCB2
+//   SRVA ─┘  10.10.0.0/24                                    10.20.0.0/24
+
+const client = (id: string, x: number, y: number): Device => ({ id, kind: "pc", x, y, ports: [{ name: "eth0" }], dhcpClient: true });
+
+export function dhcpLab(): Topology {
+  return {
+    devices: [
+      client("PCA1", 110, 110),
+      client("PCA2", 110, 290),
+      host("SRVA", "server", 300, 380, "10.10.0.11/24", "10.10.0.1"),
+      sw("SWA", 300, 200, 8),
+      router("HQ", 510, 200, [{ name: "Gi0/0", ip: "10.0.0.1/30" }, { name: "Gi0/1", ip: "10.10.0.1/24" }, ...down("Gi0/2", "Gi0/3")], {
+        routes: [{ prefix: "10.20.0.0/24", via: "10.0.0.2" }],
+        dhcp: {
+          excluded: [
+            { start: "10.10.0.1", end: "10.10.0.10" },
+            { start: "10.20.0.1", end: "10.20.0.10" },
+          ],
+          pools: [
+            { name: "LAN-A", network: "10.10.0.0/24", gateway: "10.10.0.1", dns: "10.10.0.11" },
+            { name: "LAN-B", network: "10.20.0.0/24", gateway: "10.20.0.1", dns: "10.10.0.11" },
+          ],
+        },
+      }),
+      router("BR", 720, 200, [{ name: "Gi0/0", ip: "10.0.0.2/30" }, { name: "Gi0/1", ip: "10.20.0.1/24", helpers: ["10.0.0.1"] }, ...down("Gi0/2", "Gi0/3")], {
+        routes: [{ prefix: "0.0.0.0/0", via: "10.0.0.1" }],
+      }),
+      sw("SWB", 900, 200, 8),
+      client("PCB1", 1080, 110),
+      client("PCB2", 1080, 290),
+    ],
+    links: [
+      { a: ["PCA1", "eth0"], b: ["SWA", "Gi1/0/1"] },
+      { a: ["PCA2", "eth0"], b: ["SWA", "Gi1/0/2"] },
+      { a: ["SRVA", "eth0"], b: ["SWA", "Gi1/0/3"] },
+      { a: ["SWA", "Gi1/0/8"], b: ["HQ", "Gi0/1"] },
+      { a: ["HQ", "Gi0/0"], b: ["BR", "Gi0/0"] },
+      { a: ["BR", "Gi0/1"], b: ["SWB", "Gi1/0/8"] },
+      { a: ["PCB1", "eth0"], b: ["SWB", "Gi1/0/1"] },
+      { a: ["PCB2", "eth0"], b: ["SWB", "Gi1/0/2"] },
+    ],
+  };
+}
+
+function dhcpTweak(fn: (t: Topology) => void): Topology {
+  const t = dhcpLab();
+  fn(t);
+  return t;
+}
+const pool = (t: Topology, name: string) => dev(t, "HQ").dhcp!.pools.find((p) => p.name === name)!;
+
+scenarios.push(
+  {
+    id: "dhcp",
+    title: "DHCP server and relay example",
+    exam: "encor",
+    objective: "4.1",
+    kind: "sandbox",
+    brief:
+      "HQ runs the DHCP server for both LANs; BR relays the branch's broadcasts with `ip helper-address`. Open a PC's console and type `ip dhcp`, then step through the packet walk: DISCOVER, relay with giaddr, OFFER, REQUEST, ACK. SRVA's static 10.10.0.11 sits inside LAN-A's pool, so watch the server's ping check skip it.",
+    topology: dhcpLab(),
+    goals: [],
+  },
+  {
+    id: "dhcp-relay",
+    title: "Branch users get 169.254 addresses",
+    exam: "encor",
+    objective: "4.1",
+    kind: "challenge",
+    brief: "Ticket #9003: every PC at the branch shows a 169.254.x.x address after BR was replaced. HQ users are fine.",
+    hint: "Run `ip dhcp` on a branch PC and follow the packet walk. Routers don't forward broadcasts unless told to.",
+    debrief:
+      "BR's LAN interface had no `ip helper-address`, so the DISCOVER broadcast stopped at the router. With the helper, BR relays it as unicast to HQ and sets giaddr to 10.20.0.1, which is how HQ knows to use pool LAN-B.",
+    topology: dhcpTweak((t) => delete dev(t, "BR").ports.find((p) => p.name === "Gi0/1")!.helpers),
+    goals: [{ type: "dhcp", host: "PCB1", within: "10.20.0.0/24", to: "10.10.0.11", label: "PCB1 gets a 10.20.0.0/24 lease and reaches SRVA" }],
+  },
+  {
+    id: "dhcp-gateway",
+    title: "Address yes, Internet no",
+    exam: "encor",
+    objective: "4.1",
+    kind: "challenge",
+    brief: "Ticket #9010: HQ PCs get an address by DHCP and can reach the local server, but nothing outside their subnet, including the branch.",
+    hint: "Compare `ipconfig` on an HQ PC with `show ip dhcp pool` on HQ. Which option tells a client where to send off-subnet traffic?",
+    debrief:
+      "Pool LAN-A had no `default-router`, so clients got an IP and mask but no gateway. They could only reach their own subnet. DHCP options are as important as the address itself.",
+    topology: dhcpTweak((t) => delete pool(t, "LAN-A").gateway),
+    goals: [{ type: "dhcp", host: "PCA1", within: "10.10.0.0/24", to: "10.20.0.1", label: "PCA1 gets a lease with a gateway and reaches the branch" }],
+  },
+  {
+    id: "dhcp-pool",
+    title: "The relay works, the server says no",
+    exam: "encor",
+    objective: "4.1",
+    kind: "challenge",
+    brief: "Ticket #9018: branch PCs still don't get addresses. BR does have its helper-address, and HQ is reachable from BR.",
+    hint: "When a request is relayed, the server picks a pool by matching giaddr. Does any pool on HQ contain 10.20.0.1?",
+    debrief:
+      "Pool LAN-B had `network 10.2.0.0 255.255.255.0`, a typo. The relayed DISCOVER arrived with giaddr 10.20.0.1, no pool matched, and HQ stayed silent (`DHCPD: there is no pool for 10.20.0.1`).",
+    topology: dhcpTweak((t) => (pool(t, "LAN-B").network = "10.2.0.0/24")),
+    goals: [{ type: "dhcp", host: "PCB1", within: "10.20.0.0/24", to: "10.10.0.11", label: "PCB1 gets a 10.20.0.0/24 lease and reaches SRVA" }],
+  },
+);
+
 export const scenarioById = Object.fromEntries(scenarios.map((s) => [s.id, s]));

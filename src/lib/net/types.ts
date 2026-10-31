@@ -23,6 +23,26 @@ export type Port = {
   ospf?: IfOspf;
   /** `channel-group N mode X` on a physical switch port. */
   channel?: { group: number; mode: ChannelMode };
+  /** `ip nat inside|outside`. */
+  nat?: "inside" | "outside";
+  /** `ip helper-address` targets (DHCP relay). */
+  helpers?: string[];
+};
+
+/** `ip nat inside source ...` rules, in configuration order. */
+export type NatRule =
+  | { kind: "static"; local: string; global: string }
+  | { kind: "dynamic"; acl: string; pool?: string; iface?: string; overload: boolean };
+
+export type NatPool = { name: string; start: string; end: string; len: number };
+
+export type DhcpPool = {
+  name: string;
+  /** "10.10.0.0/24" */
+  network?: string;
+  gateway?: string;
+  dns?: string;
+  domain?: string;
 };
 
 export type ChannelMode = "active" | "passive" | "desirable" | "auto" | "on";
@@ -52,7 +72,17 @@ export type Ospf = {
   defaultOriginate?: "yes" | "always";
 };
 
-export type Svi = { vlan: number; ip: string; shutdown?: boolean; aclIn?: string; aclOut?: string; mtu?: number; ospf?: IfOspf };
+export type Svi = {
+  vlan: number;
+  ip: string;
+  shutdown?: boolean;
+  aclIn?: string;
+  aclOut?: string;
+  mtu?: number;
+  ospf?: IfOspf;
+  nat?: "inside" | "outside";
+  helpers?: string[];
+};
 
 export type StaticRoute = { prefix: string; via: string };
 
@@ -88,6 +118,11 @@ export type Device = {
   ospf?: Ospf;
   /** Logical Port-channel interfaces ("Po1"), configured like switchports. */
   portChannels?: Port[];
+  nat?: { rules: NatRule[]; pools: NatPool[] };
+  /** IOS DHCP server. */
+  dhcp?: { pools: DhcpPool[]; excluded: { start: string; end: string }[] };
+  /** Hosts only: the NIC is set to obtain its address by DHCP. */
+  dhcpClient?: boolean;
 };
 
 export type Link = { a: [string, string]; b: [string, string] };
@@ -106,6 +141,12 @@ export type Goal =
   | { type: "ospfRole"; device: string; iface: string; role: "DR" | "BDR" | "DROTHER"; label: string }
   /** The device's Port-channel is bundled (SU). */
   | { type: "bundle"; device: string; po: string; label: string }
+  /** Every pair pings successfully in sequence on one network (shared NAT/ARP state). */
+  | { type: "reachAll"; pairs: [string, string][]; label: string }
+  /** The ping succeeds and `device` holds a NAT translation for the source host. */
+  | { type: "natVia"; from: string; to: string; device: string; label: string }
+  /** The host gets a DHCP lease (optionally inside `within`), then optionally pings `to`. */
+  | { type: "dhcp"; host: string; within?: string; to?: string; label: string }
   /** A route for exactly this prefix is (or is not) in the device's table, optionally with this code. */
   | { type: "route"; device: string; prefix: string; code?: string; expect: boolean; label: string };
 

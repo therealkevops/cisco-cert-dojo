@@ -399,7 +399,7 @@ export function BenchCanvas(p: Props) {
           const sub =
             p.lens === "l3"
               ? net.isHost(d)
-                ? d.ports[0].ip ?? ""
+                ? (d.ports[0].ip ?? (d.dhcpClient ? "DHCP · no lease" : ""))
                 : ""
               : net.isSwitch(d) && stp?.bridgeId[d.id]
                 ? `prio ${stp.bridgeId[d.id].prio}`

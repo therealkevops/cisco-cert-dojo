@@ -1,11 +1,17 @@
 import { Net, type ProbeResult } from "../net/engine";
 import { intToIp, ipToInt, isIp, maskOf, maskToLen, parseCidr, wildcardToLen } from "../net/ip";
 import { renameDevice } from "../net/ops";
+import { apipa, dhcpRelease, dhcpRequest } from "../net/dhcp";
 import {
   ipconfig,
   longIf,
   showAcls,
   showArp,
+  showDhcpBinding,
+  showDhcpConflict,
+  showDhcpPool,
+  showNatStatistics,
+  showNatTranslations,
   showEtherchannel,
   debugOspfAdj,
   showIpProtocols,
@@ -37,11 +43,12 @@ export type Mode =
   | { m: "vlan"; vlan: number }
   | { m: "acl"; name: string }
   | { m: "line" }
-  | { m: "router" };
+  | { m: "router" }
+  | { m: "dhcp"; pool: string };
 
 export type Session = { dev: string; priv: boolean; mode: Mode };
 
-export type ProbeRun = { kind: "ping" | "trace"; src: string; dst: string; header: string; probes: ProbeResult[]; error?: string };
+export type ProbeRun = { kind: "ping" | "trace" | "dhcp"; src: string; dst: string; header: string; probes: ProbeResult[]; error?: string };
 
 export type CliResult = {
   out: string;
@@ -68,6 +75,7 @@ export function prompt(s: Session, isHost: boolean): string {
     acl: "(config-ext-nacl)",
     line: "(config-line)",
     router: "(config-router)",
+    dhcp: "(dhcp-config)",
   };
   return `${s.dev}${sfx[s.mode.m]}${s.priv ? "#" : ">"}`;
 }
@@ -236,6 +244,21 @@ function showTree(): Node[] {
             kw("interface", "Interface information", { run: (c) => say(c, showOspfIntBrief(c.net, c.s.dev)), sub: [kw("brief", "Brief summary of interface information", { run: (c) => say(c, showOspfIntBrief(c.net, c.s.dev)) })] }),
           ],
         }),
+        kw("nat", "IP NAT information", {
+          when: isL3,
+          sub: [
+            kw("translations", "Translation entries", { run: (c) => say(c, showNatTranslations(c.net, c.s.dev)), sub: [kw("verbose", "Show extra information", { run: (c) => say(c, showNatTranslations(c.net, c.s.dev)) })] }),
+            kw("statistics", "Translation statistics", { run: (c) => say(c, showNatStatistics(c.net, c.s.dev)) }),
+          ],
+        }),
+        kw("dhcp", "Show items in the DHCP database", {
+          when: isL3,
+          sub: [
+            kw("binding", "DHCP address bindings", { run: (c) => say(c, showDhcpBinding(c.net, c.s.dev)) }),
+            kw("pool", "DHCP pools information", { run: (c) => say(c, showDhcpPool(c.net, c.s.dev)) }),
+            kw("conflict", "DHCP address conflicts", { run: (c) => say(c, showDhcpConflict(c.net, c.s.dev)) }),
+          ],
+        }),
         kw("protocols", "IP routing protocol process parameters and statistics", { when: isL3, run: (c) => say(c, showIpProtocols(c.net, c.s.dev)) }),
       ],
     }),
@@ -288,7 +311,19 @@ function execTree(): Node[] {
     kw("clear", "Reset functions", {
       when: (c) => c.s.priv,
       sub: [
-        kw("ip", "IP", { sub: [kw("ospf", "OSPF", { sub: [kw("process", "Reset OSPF process", { run: (c) => say(c, "Reset ALL OSPF processes? [no]: yes\n(Wire Room recomputes OSPF after every change, so this is instant.)") })] })] }),
+        kw("ip", "IP", {
+          when: isL3,
+          sub: [
+            kw("ospf", "OSPF", { sub: [kw("process", "Reset OSPF process", { run: (c) => say(c, "Reset ALL OSPF processes? [no]: yes\n(Wire Room recomputes OSPF after every change, so this is instant.)") })] }),
+            kw("nat", "Clear NAT", { sub: [kw("translation", "Clear dynamic translations", { sub: [kw("*", "Delete all dynamic translations", { run: (c) => c.net.natTables.set(c.s.dev, (c.net.natTables.get(c.s.dev) ?? []).filter((e) => e.kind === "static")) })] })] }),
+            kw("dhcp", "Clear DHCP", {
+              sub: [
+                kw("binding", "Clear bindings", { sub: [kw("*", "All bindings", { run: (c) => c.net.dhcpBindings.delete(c.s.dev) })] }),
+                kw("conflict", "Clear conflicts", { sub: [kw("*", "All conflicts", { run: (c) => c.net.dhcpConflicts.delete(c.s.dev) })] }),
+              ],
+            }),
+          ],
+        }),
         kw("mac", "MAC forwarding table", { when: isSwitch, sub: [kw("address-table", "MAC forwarding table", { run: (c) => c.net.macTables.delete(c.s.dev), sub: [kw("dynamic", "dynamic entries", { run: (c) => c.net.macTables.delete(c.s.dev) })] })] }),
         kw("arp-cache", "Clear the entire ARP cache", { run: (c) => c.net.arpTables.delete(c.s.dev) }),
       ],
@@ -552,6 +587,33 @@ function configTree(): Node[] {
             }),
           ],
         }),
+        kw("nat", "NAT configuration commands", { when: isL3, sub: natGlobalTree(false) }),
+        kw("dhcp", "Configure DHCP server and relay parameters", {
+          when: isL3,
+          sub: [
+            kw("pool", "Configure DHCP address pools", {
+              sub: [
+                arg("word", "name", "WORD", "Pool name", {
+                  run: (c) => {
+                    edit(c, (d) => {
+                      d.dhcp = d.dhcp ?? { pools: [], excluded: [] };
+                      if (!d.dhcp.pools.some((p) => p.name === c.a.name)) d.dhcp.pools.push({ name: c.a.name });
+                    });
+                    c.s.mode = { m: "dhcp", pool: c.a.name };
+                  },
+                }),
+              ],
+            }),
+            kw("excluded-address", "Prevent DHCP from assigning certain addresses", {
+              sub: [
+                arg("ip", "lo", "A.B.C.D", "Low IP address", {
+                  run: (c) => excluded(c, c.a.lo, c.a.lo, false),
+                  sub: [arg("ip", "hi", "A.B.C.D", "High IP address", { run: (c) => excluded(c, c.a.lo, c.a.hi, false) })],
+                }),
+              ],
+            }),
+          ],
+        }),
         kw("routing", "Enable IP routing", { when: (c) => c.dev.kind !== "pc" && c.dev.kind !== "server", run: (c) => { if (c.dev.kind === "switch") say(c, "% This is a Layer 2 switch model. Use an L3 switch for 'ip routing'."); } }),
         kw("access-list", "Named access list", {
           sub: [
@@ -620,7 +682,7 @@ function configTree(): Node[] {
     kw("line", "Configure a terminal line", { sub: [arg("line", "x", "LINE", "con 0 | vty 0 15", { run: (c) => (c.s.mode = { m: "line" }) })] }),
     kw("enable", "Modify enable password parameters", { sub: [arg("line", "x", "LINE", "secret / password", { run: accepted })] }),
     kw("username", "Establish User Name Authentication", { sub: [arg("line", "x", "LINE", "User name and options", { run: accepted })] }),
-    kw("service", "Modify use of network based services", { sub: [arg("line", "x", "LINE", "e.g. password-encryption", { run: accepted })] }),
+    kw("service", "Modify use of network based services", { sub: [kw("dhcp", "Enable the DHCP server and relay agent", { run: accepted }), arg("line", "x", "LINE", "e.g. password-encryption", { run: accepted })] }),
     kw("banner", "Define a login banner", { sub: [arg("line", "x", "LINE", "c banner-text c", { run: accepted })] }),
     kw("cdp", "Global CDP configuration subcommands", { sub: [kw("run", "Enable CDP", { run: accepted })] }),
     kw("no", "Negate a command or set its defaults", {
@@ -642,6 +704,16 @@ function configTree(): Node[] {
             }),
             kw("access-list", "Named access list", { sub: [kw("extended", "Extended Access List", { sub: [arg("word", "name", "WORD", "Access-list name", { run: (c) => edit(c, (d) => { if (d.acls) delete d.acls[c.a.name]; }) })] })] }),
             kw("domain-lookup", "Disable DNS lookup", { run: accepted }),
+            kw("nat", "NAT configuration commands", { when: isL3, sub: natGlobalTree(true) }),
+            kw("dhcp", "DHCP", {
+              when: isL3,
+              sub: [
+                kw("pool", "Delete a DHCP pool", { sub: [arg("word", "name", "WORD", "Pool name", { run: (c) => edit(c, (d) => { if (d.dhcp) d.dhcp.pools = d.dhcp.pools.filter((p) => p.name !== c.a.name); }) })] }),
+                kw("excluded-address", "Remove an exclusion", {
+                  sub: [arg("ip", "lo", "A.B.C.D", "Low IP address", { run: (c) => excluded(c, c.a.lo, c.a.lo, true), sub: [arg("ip", "hi", "A.B.C.D", "High IP address", { run: (c) => excluded(c, c.a.lo, c.a.hi, true) })] })],
+                }),
+              ],
+            }),
             kw("domain", "IP DNS Resolver", { sub: [kw("lookup", "Disable DNS lookup", { run: accepted })] }),
             kw("routing", "Disable IP routing", { run: notSimulated("Turning routing off on an L3 switch") }),
           ],
@@ -697,6 +769,17 @@ function ifTree(): Node[] {
       sub: [
         kw("address", "Set the IP address of an interface", { sub: [arg("ip", "ip", "A.B.C.D", "IP address", { sub: [arg("mask", "mask", "A.B.C.D", "IP subnet mask", { run: (c) => setIp(c, c.a.ip, c.a.mask) })] }), kw("dhcp", "IP Address negotiated via DHCP", { run: notSimulated("DHCP") })] }),
         kw("ospf", "OSPF interface commands", { when: isL3, sub: ifOspfTree(false) }),
+        kw("nat", "NAT interface commands", {
+          when: isL3,
+          sub: [
+            kw("inside", "Inside interface for address translation", { run: (c) => eachIf(c, (p) => { p.nat = "inside"; }) }),
+            kw("outside", "Outside interface for address translation", { run: (c) => eachIf(c, (p) => { p.nat = "outside"; }) }),
+          ],
+        }),
+        kw("helper-address", "Specify a destination address for UDP broadcasts (DHCP relay)", {
+          when: isL3,
+          sub: [arg("ip", "h", "A.B.C.D", "IP destination address", { run: (c) => eachIf(c, (p) => { p.helpers = [...new Set([...(p.helpers ?? []), c.a.h])]; }) })],
+        }),
         kw("mtu", "Set IP Maximum Transmission Unit", { sub: [arg("num", "mtu", "<68-9216>", "MTU (bytes)", { range: [68, 9216], run: (c) => eachIf(c, (p) => { p.mtu = +c.a.mtu === 1500 ? undefined : +c.a.mtu; }) })] }),
         kw("access-group", "Specify access control for packets", {
           sub: [
@@ -790,6 +873,16 @@ function ifTree(): Node[] {
           sub: [
             kw("address", "Set the IP address of an interface", { run: (c) => eachIf(c, (p, isSvi) => { if (isSvi) (p as { ip: string }).ip = ""; else delete (p as Device["ports"][number]).ip; }) }),
             kw("ospf", "OSPF interface commands", { when: isL3, sub: ifOspfTree(true) }),
+            kw("nat", "Remove the NAT role", {
+              sub: [
+                kw("inside", "Inside interface", { run: (c) => eachIf(c, (p) => { if (p.nat === "inside") delete p.nat; }) }),
+                kw("outside", "Outside interface", { run: (c) => eachIf(c, (p) => { if (p.nat === "outside") delete p.nat; }) }),
+              ],
+            }),
+            kw("helper-address", "Remove helper addresses", {
+              run: (c) => eachIf(c, (p) => { delete p.helpers; }),
+              sub: [arg("ip", "h", "A.B.C.D", "Helper to remove", { run: (c) => eachIf(c, (p) => { p.helpers = (p.helpers ?? []).filter((x) => x !== c.a.h); if (!p.helpers.length) delete p.helpers; }) })],
+            }),
             kw("mtu", "Reset the IP MTU", { run: (c) => eachIf(c, (p) => { delete p.mtu; }) }),
             kw("access-group", "Specify access control for packets", {
               sub: [arg("word", "acl", "WORD", "Access-list name", { sub: [kw("in", "inbound packets", { run: (c) => eachIf(c, (p) => { delete p.aclIn; }) }), kw("out", "outbound packets", { run: (c) => eachIf(c, (p) => { delete p.aclOut; }) })] })],
@@ -867,6 +960,159 @@ function simpleSubTree(exitTo: Mode["m"]): Node[] {
     kw("logging", "Modify message logging facilities", { sub: [arg("line", "x", "LINE", "synchronous", { run: accepted })] }),
     kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
     kw("exit", "Exit from this mode", { run: (c) => (c.s.mode = { m: exitTo === "exec" ? "exec" : "config" } as Mode) }),
+    kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
+  ];
+}
+
+/** `ip nat ...` in global config. */
+function natGlobalTree(neg: boolean): Node[] {
+  const nat = (c: Ctx, fn: (n: NonNullable<Device["nat"]>) => void) =>
+    edit(c, (d) => {
+      d.nat = d.nat ?? { rules: [], pools: [] };
+      fn(d.nat);
+      if (!d.nat.rules.length && !d.nat.pools.length) delete d.nat;
+    });
+  const dyn = (c: Ctx, target: { iface?: string; pool?: string }, overload: boolean) =>
+    nat(c, (n) => {
+      const rest = n.rules.filter((r) => !(r.kind === "dynamic" && r.acl === c.a.acl));
+      n.rules = neg ? rest : [...rest, { kind: "dynamic", acl: c.a.acl, ...target, overload }];
+      if (!neg && !c.dev.acls?.[c.a.acl]) say(c, `% Note: access-list ${c.a.acl} doesn't exist yet. Until it does, nothing matches this rule.`);
+    });
+  return [
+    kw("inside", "Inside address translation", {
+      sub: [
+        kw("source", "Source address translation", {
+          sub: [
+            kw("list", "Specify access list describing local addresses", {
+              sub: [
+                arg("word", "acl", "WORD", "Access list name or number", {
+                  run: neg ? (c) => dyn(c, {}, false) : undefined,
+                  sub: [
+                    kw("interface", "Specify interface for global address", {
+                      sub: [
+                        arg("iface", "if", "<interface>", "Interface", {
+                          run: (c) => (neg ? dyn(c, {}, false) : say(c, "% Add 'overload': interface NAT always translates many hosts to one address")),
+                          sub: [kw("overload", "Overload an address translation", { run: (c) => dyn(c, { iface: c.a.if }, true) })],
+                        }),
+                      ],
+                    }),
+                    kw("pool", "Name pool of global addresses", {
+                      sub: [
+                        arg("word", "pool", "WORD", "Pool name", {
+                          run: (c) => dyn(c, { pool: c.a.pool }, false),
+                          sub: [kw("overload", "Overload an address translation", { run: (c) => dyn(c, { pool: c.a.pool }, true) })],
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            kw("static", "Specify static local->global mapping", {
+              sub: [
+                arg("ip", "local", "A.B.C.D", "Inside local IP address", {
+                  sub: [
+                    arg("ip", "global", "A.B.C.D", "Inside global IP address", {
+                      run: (c) =>
+                        nat(c, (n) => {
+                          const rest = n.rules.filter((r) => !(r.kind === "static" && (r.local === c.a.local || r.global === c.a.global)));
+                          n.rules = neg ? rest : [...rest, { kind: "static", local: c.a.local, global: c.a.global }];
+                        }),
+                    }),
+                  ],
+                }),
+                kw("tcp", "Transmission Control Protocol", { run: notSimulated("Static PAT for TCP (only ICMP traffic is simulated)"), sub: [arg("line", "x", "LINE", "local port global port", { run: notSimulated("Static PAT for TCP (only ICMP traffic is simulated)") })] }),
+                kw("udp", "User Datagram Protocol", { run: notSimulated("Static PAT for UDP (only ICMP traffic is simulated)"), sub: [arg("line", "x", "LINE", "local port global port", { run: notSimulated("Static PAT for UDP (only ICMP traffic is simulated)") })] }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+    kw("pool", "Define pool of addresses", {
+      sub: [
+        arg("word", "name", "WORD", "Pool name", {
+          run: neg ? (c) => nat(c, (n) => (n.pools = n.pools.filter((p) => p.name !== c.a.name))) : undefined,
+          sub: [
+            arg("ip", "start", "A.B.C.D", "Start IP address", {
+              sub: [
+                arg("ip", "end", "A.B.C.D", "End IP address", {
+                  sub: [
+                    kw("netmask", "Specify the network mask", {
+                      sub: [arg("mask", "mask", "A.B.C.D", "Network mask", { run: (c) => natPool(c, nat, maskToLen(c.a.mask), neg) })],
+                    }),
+                    kw("prefix-length", "Specify the prefix length", {
+                      sub: [arg("num", "len", "<1-32>", "Prefix length", { range: [1, 32], run: (c) => natPool(c, nat, +c.a.len, neg) })],
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+  ];
+}
+
+function natPool(c: Ctx, nat: (c: Ctx, fn: (n: NonNullable<Device["nat"]>) => void) => void, len: number | null, neg: boolean) {
+  if (len === null) return say(c, "% Invalid netmask");
+  if (ipToInt(c.a.end) < ipToInt(c.a.start)) return say(c, "% End address less than start address");
+  const net = (ipToInt(c.a.start) & maskOf(len)) >>> 0;
+  if (((ipToInt(c.a.end) & maskOf(len)) >>> 0) !== net) return say(c, "% Start and end addresses are on different subnets");
+  nat(c, (n) => {
+    const rest = n.pools.filter((p) => p.name !== c.a.name);
+    n.pools = neg ? rest : [...rest, { name: c.a.name, start: c.a.start, end: c.a.end, len }];
+  });
+}
+
+function excluded(c: Ctx, lo: string, hi: string, neg: boolean) {
+  if (ipToInt(hi) < ipToInt(lo)) return say(c, "% High address is lower than low address");
+  edit(c, (d) => {
+    d.dhcp = d.dhcp ?? { pools: [], excluded: [] };
+    const rest = d.dhcp.excluded.filter((e) => !(e.start === lo && e.end === hi));
+    if (neg && rest.length === d.dhcp.excluded.length) say(c, "% Range not found");
+    d.dhcp.excluded = neg ? rest : [...rest, { start: lo, end: hi }];
+  });
+}
+
+/** Commands under `ip dhcp pool NAME`. */
+function dhcpTree(): Node[] {
+  const pool = (c: Ctx, fn: (p: NonNullable<Device["dhcp"]>["pools"][number]) => void) =>
+    edit(c, (d) => {
+      const p = d.dhcp?.pools.find((x) => c.s.mode.m === "dhcp" && x.name === c.s.mode.pool);
+      if (p) fn(p);
+    });
+  const setNet = (c: Ctx, len: number | null) => {
+    if (len === null) return say(c, "% Invalid mask");
+    const net = `${intToIp((ipToInt(c.a.ip) & maskOf(len)) >>> 0)}/${len}`;
+    if (!net.startsWith(`${c.a.ip}/`)) return say(c, `% ${c.a.ip} is not the network address of ${net}`);
+    pool(c, (p) => (p.network = net));
+  };
+  return [
+    kw("network", "Network number and mask", {
+      sub: [
+        arg("ip", "ip", "A.B.C.D", "Network number in dotted-decimal notation", {
+          sub: [
+            arg("mask", "mask", "A.B.C.D", "Network mask", { run: (c) => setNet(c, maskToLen(c.a.mask)) }),
+            arg("word", "plen", "/nn", "Prefix length, e.g. /24", { run: (c) => setNet(c, /^\/\d{1,2}$/.test(c.a.plen) ? +c.a.plen.slice(1) : null) }),
+          ],
+        }),
+      ],
+    }),
+    kw("default-router", "Default routers", { sub: [arg("ip", "gw", "A.B.C.D", "Router's IP address", { run: (c) => pool(c, (p) => (p.gateway = c.a.gw)) })] }),
+    kw("dns-server", "DNS servers", { sub: [arg("ip", "dns", "A.B.C.D", "Server's IP address", { run: (c) => pool(c, (p) => (p.dns = c.a.dns)) })] }),
+    kw("domain-name", "Domain name", { sub: [arg("word", "dn", "WORD", "Domain name", { run: (c) => pool(c, (p) => (p.domain = c.a.dn)) })] }),
+    kw("lease", "Address lease time", { sub: [arg("line", "x", "LINE", "days hours minutes | infinite", { run: accepted })] }),
+    kw("no", "Negate a command or set its defaults", {
+      sub: [
+        kw("network", "Remove the network", { run: (c) => pool(c, (p) => delete p.network), sub: [arg("line", "x", "LINE", "network mask", { run: (c) => pool(c, (p) => delete p.network) })] }),
+        kw("default-router", "Remove default routers", { run: (c) => pool(c, (p) => delete p.gateway), sub: [arg("line", "x", "LINE", "address", { run: (c) => pool(c, (p) => delete p.gateway) })] }),
+        kw("dns-server", "Remove DNS servers", { run: (c) => pool(c, (p) => delete p.dns), sub: [arg("line", "x", "LINE", "address", { run: (c) => pool(c, (p) => delete p.dns) })] }),
+      ],
+    }),
+    kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
+    kw("exit", "Exit from DHCP pool configuration mode", { run: (c) => (c.s.mode = { m: "config" }) }),
     kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
   ];
 }
@@ -1039,6 +1285,7 @@ const TREES: Record<Mode["m"], Node[]> = {
   vlan: simpleSubTree("config"),
   line: simpleSubTree("config"),
   router: ospfTree(),
+  dhcp: dhcpTree(),
 };
 
 function runDo(c: Ctx) {
@@ -1204,6 +1451,8 @@ export function complete(line: string, s: Session, topo: Topology, net: Net): st
 const HOST_HELP = `Available commands:
   ip ADDRESS/LEN [GATEWAY]     set the address, e.g. ip 10.0.0.10/24 10.0.0.1
   ip ADDRESS MASK [GATEWAY]    same, with a dotted mask
+  ip dhcp                      get an address from a DHCP server (also: dhcp, ipconfig /renew)
+  ipconfig /release            give the DHCP lease back
   ipconfig                     show the IP configuration
   ping ADDRESS                 send 4 ICMP echo requests
   tracert ADDRESS              trace the route
@@ -1216,6 +1465,43 @@ function runHost(line: string, s: Session, topo: Topology, net: Net): CliResult 
   const out = (text: string, extra: Partial<CliResult> = {}): CliResult => ({ out: text, session: s, ...extra });
   if (!cmd) return out("");
   if (cmd === "?" || cmd === "help") return out(HOST_HELP);
+  const renew = (cmd === "ip" && tk[1]?.toLowerCase() === "dhcp") || cmd === "dhcp" || (cmd === "ipconfig" && tk[1]?.toLowerCase() === "/renew");
+  if (renew) {
+    const r = dhcpRequest(net, s.dev);
+    const probe: ProbeRun = { kind: "dhcp", src: s.dev, dst: "255.255.255.255", header: `DHCP for ${s.dev}`, probes: [{ seq: 1, mark: r.ok ? "!" : ".", events: r.events }] };
+    const next = structuredClone(topo);
+    const d = next.devices.find((x) => x.id === s.dev)!;
+    d.dhcpClient = true;
+    if (!r.ok || !r.lease) {
+      const ip = apipa(net, s.dev);
+      d.ports[0].ip = `${ip}/16`;
+      delete d.gateway;
+      return out(`DORA: DISCOVER ... no DHCPOFFER received.\n${s.dev} : ${r.error ?? "DHCP failed"}\nAutoconfiguration IPv4 address: ${ip}/16 (APIPA). Open the packet walk to see where the DISCOVER went.`, { topo: next, probe });
+    }
+    const l = r.lease;
+    d.ports[0].ip = `${l.ip}/${l.len}`;
+    if (l.gateway) d.gateway = l.gateway;
+    else delete d.gateway;
+    return out(
+      [
+        `DORA: DISCOVER → OFFER → REQUEST → ACK`,
+        `   IPv4 Address. . . . . . . . . : ${l.ip}`,
+        `   Subnet Mask . . . . . . . . . : ${intToIp(maskOf(l.len))}`,
+        `   Default Gateway . . . . . . . : ${l.gateway ?? ""}`,
+        `   DHCP Server . . . . . . . . . : ${l.server}${l.relay ? ` (relayed by ${l.relay})` : ""}`,
+        ...(l.dns ? [`   DNS Servers . . . . . . . . . : ${l.dns}`] : []),
+      ].join("\n"),
+      { topo: next, probe },
+    );
+  }
+  if (cmd === "ipconfig" && tk[1]?.toLowerCase() === "/release") {
+    dhcpRelease(net, s.dev);
+    const next = structuredClone(topo);
+    const d = next.devices.find((x) => x.id === s.dev)!;
+    delete d.ports[0].ip;
+    delete d.gateway;
+    return out(`DHCPRELEASE sent. ${s.dev} has no IPv4 address.`, { topo: next });
+  }
   if (cmd === "ipconfig" || (cmd === "show" && tk[1] === "ip")) return out(ipconfig(net, s.dev));
   if (cmd === "arp") return out(showArp(net, s.dev));
   if (cmd === "ip") {
@@ -1235,6 +1521,7 @@ function runHost(line: string, s: Session, topo: Topology, net: Net): CliResult 
     const d = next.devices.find((x) => x.id === s.dev)!;
     d.ports[0].ip = `${ip}/${len}`;
     d.gateway = gw;
+    delete d.dhcpClient;
     return out(`${s.dev} : ${ip}/${len}${gw ? ` gateway ${gw}` : ""}`, { topo: next });
   }
   if (cmd === "ping") {
@@ -1247,7 +1534,7 @@ function runHost(line: string, s: Session, topo: Topology, net: Net): CliResult 
     for (const p of r.probes) {
       if (p.mark === "!") {
         const ttl = [...p.events].reverse().find((e) => e.kind === "deliver" && e.dev === s.dev && e.frame.ip?.icmp.type === "echo-reply")?.frame.ip?.ttl ?? 64;
-        lines.push(`Reply from ${dst}: bytes=32 time<1ms TTL=${ttl}`);
+        lines.push(`Reply from ${p.from ?? dst}: bytes=32 time<1ms TTL=${ttl}`);
       } else if (p.mark === "U") lines.push(`Reply from ${p.from}: Destination host unreachable.`);
       else lines.push("Request timed out.");
     }

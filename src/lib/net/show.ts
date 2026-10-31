@@ -1,6 +1,6 @@
 import type { Net } from "./engine";
 import type { Device, IfOspf } from "./types";
-import { aclSpecToIos, dottedMask } from "./ip";
+import { aclSpecToIos, dottedMask, inCidr, intToIp, ipToInt, parseCidr } from "./ip";
 
 // IOS-flavoured renderings of simulator state, so the inspector reads like a
 // console and the same text can back a CLI later.
@@ -130,6 +130,7 @@ export function ipconfig(net: Net, dev: string): string {
     `   IPv4 Address. . . . . . . . . : ${nic.cidr.ip}`,
     `   Subnet Mask . . . . . . . . . : ${dottedMask(nic.cidr.len)}`,
     `   Default Gateway . . . . . . . : ${d.gateway ?? ""}`,
+    `   DHCP Enabled. . . . . . . . . : ${d.dhcpClient ? "Yes" : "No"}`,
   ].join("\n");
 }
 
@@ -204,6 +205,7 @@ export function showRun(net: Net, dev: string): string {
     } else if (mode === "routed" && !net.isHost(d)) L.push(" no ip address");
     if (p.aclIn) L.push(` ip access-group ${p.aclIn} in`);
     if (p.aclOut) L.push(` ip access-group ${p.aclOut} out`);
+    L.push(...ifServiceLines(p));
     L.push(...ifOspfLines(d, p));
     if (p.channel) L.push(` channel-group ${p.channel.group} mode ${p.channel.mode}`);
     if (p.shutdown) L.push(" shutdown");
@@ -214,8 +216,33 @@ export function showRun(net: Net, dev: string): string {
     L.push(`interface Vlan${s.vlan}`, s.ip ? ` ip address ${ip} ${dottedMask(Number(len))}` : " no ip address");
     if (s.aclIn) L.push(` ip access-group ${s.aclIn} in`);
     if (s.aclOut) L.push(` ip access-group ${s.aclOut} out`);
+    L.push(...ifServiceLines(s));
     L.push(...ifOspfLines(d, s));
     if (s.shutdown) L.push(" shutdown");
+    L.push("!");
+  }
+  if (d.dhcp) {
+    for (const e of d.dhcp.excluded) L.push(`ip dhcp excluded-address ${e.start}${e.end !== e.start ? ` ${e.end}` : ""}`);
+    for (const p of d.dhcp.pools) {
+      L.push(`ip dhcp pool ${p.name}`);
+      if (p.network) {
+        const [ip, len] = p.network.split("/");
+        L.push(` network ${ip} ${dottedMask(Number(len))}`);
+      }
+      if (p.gateway) L.push(` default-router ${p.gateway}`);
+      if (p.dns) L.push(` dns-server ${p.dns}`);
+      if (p.domain) L.push(` domain-name ${p.domain}`);
+    }
+    L.push("!");
+  }
+  if (d.nat) {
+    for (const p of d.nat.pools) L.push(`ip nat pool ${p.name} ${p.start} ${p.end} netmask ${dottedMask(p.len)}`);
+    for (const r of d.nat.rules)
+      L.push(
+        r.kind === "static"
+          ? `ip nat inside source static ${r.local} ${r.global}`
+          : `ip nat inside source list ${r.acl} ${r.iface ? `interface ${longIf(r.iface)}` : `pool ${r.pool}`}${r.overload ? " overload" : ""}`,
+      );
     L.push("!");
   }
   if (d.ospf) {
@@ -240,8 +267,13 @@ export function showRun(net: Net, dev: string): string {
   }
   if (d.routes?.length) L.push("!");
   for (const [name, aces] of Object.entries(d.acls ?? {})) {
-    L.push(`ip access-list extended ${name}`);
-    aces.forEach((a, i) => L.push(` ${a.seq ?? (i + 1) * 10} ${a.action} ${a.proto} ${aclSpecToIos(a.src)} ${aclSpecToIos(a.dst)}`));
+    const num = /^\d+$/.test(name) ? +name : 0;
+    if (num >= 1 && num <= 99) aces.forEach((a) => L.push(`access-list ${name} ${a.action} ${aclSpecToIos(a.src).replace(/^host /, "")}`));
+    else if (num >= 100) aces.forEach((a) => L.push(`access-list ${name} ${a.action} ${a.proto} ${aclSpecToIos(a.src)} ${aclSpecToIos(a.dst)}`));
+    else {
+      L.push(`ip access-list extended ${name}`);
+      aces.forEach((a, i) => L.push(` ${a.seq ?? (i + 1) * 10} ${a.action} ${a.proto} ${aclSpecToIos(a.src)} ${aclSpecToIos(a.dst)}`));
+    }
     L.push("!");
   }
   L.push("end");
@@ -303,8 +335,8 @@ export function showVersion(net: Net, dev: string): string {
     `${d.id} uptime is 0 minutes`,
     `${d.ports.length} Gigabit Ethernet interfaces`,
     "",
-    "Simulated: VLANs, 802.1Q, RSTP, EtherChannel, ARP, static routing, OSPFv2, extended ACLs, ICMP.",
-    "Not simulated yet: EIGRP, BGP, NAT, DHCP, subinterfaces.",
+    "Simulated: VLANs, 802.1Q, RSTP, EtherChannel, ARP, static routing, OSPFv2, extended ACLs, NAT/PAT, DHCP, ICMP.",
+    "Not simulated yet: EIGRP, BGP, subinterfaces.",
   ].join("\n");
 }
 
@@ -411,5 +443,113 @@ export function showEtherchannel(net: Net, dev: string): string {
   }
   const why = list.flatMap((b) => b.members.filter((m) => m.why && m.flag !== "D").map((m) => `  ${m.port}: ${m.why}`));
   if (why.length) rows.push("", "Not bundled:", ...why);
+  return rows.join("\n");
+}
+
+function ifServiceLines(p: { nat?: "inside" | "outside"; helpers?: string[] }): string[] {
+  const out: string[] = [];
+  for (const h of p.helpers ?? []) out.push(` ip helper-address ${h}`);
+  if (p.nat) out.push(` ip nat ${p.nat}`);
+  return out;
+}
+
+// --- NAT ---------------------------------------------------------------------------
+
+export function showNatTranslations(net: Net, dev: string): string {
+  const list = net.natTables.get(dev) ?? [];
+  const d = net.device(dev);
+  // Static mappings show even before any traffic uses them.
+  const statics = (d.nat?.rules ?? []).filter((r) => r.kind === "static");
+  const rows = ["Pro  Inside global         Inside local          Outside local         Outside global"];
+  const sock = (ip?: string, id?: number) => (ip ? `${ip}${id !== undefined ? `:${id}` : ""}` : "---");
+  for (const e of list) {
+    if (e.kind === "static") continue;
+    const pro = e.kind === "pat" || e.outside ? "icmp" : "---";
+    rows.push(`${pad(pro, 5)}${pad(sock(e.insideGlobal, e.globalId), 22)}${pad(sock(e.insideLocal, e.localId), 22)}${pad(sock(e.outside, e.localId), 22)}${sock(e.outside, e.localId)}`);
+  }
+  for (const r of statics) if (r.kind === "static") rows.push(`${pad("---", 5)}${pad(r.global, 22)}${pad(r.local, 22)}${pad("---", 22)}---`);
+  if (rows.length === 1) rows.push("(no translations yet: send traffic from an inside host to an outside address)");
+  return rows.join("\n");
+}
+
+export function showNatStatistics(net: Net, dev: string): string {
+  const d = net.device(dev);
+  const list = net.natTables.get(dev) ?? [];
+  const st = net.natStats.get(dev) ?? { hits: 0, misses: 0 };
+  const role = (r: "inside" | "outside") => [...d.ports.filter((p) => p.nat === r).map((p) => longIf(p.name)), ...(d.svis ?? []).filter((s) => s.nat === r).map((s) => `Vlan${s.vlan}`)];
+  const L = [
+    `Total active translations: ${list.length + (d.nat?.rules ?? []).filter((r) => r.kind === "static" && !list.some((e) => e.insideLocal === r.local)).length} (${(d.nat?.rules ?? []).filter((r) => r.kind === "static").length} static, ${list.filter((e) => e.kind !== "static").length} dynamic; ${list.filter((e) => e.kind === "pat").length} extended)`,
+    `Outside interfaces:`,
+    `  ${role("outside").join(", ") || "(none: mark one with ip nat outside)"}`,
+    `Inside interfaces:`,
+    `  ${role("inside").join(", ") || "(none: mark one with ip nat inside)"}`,
+    `Hits: ${st.hits}  Misses: ${st.misses}`,
+    `Dynamic mappings:`,
+  ];
+  for (const r of d.nat?.rules ?? []) {
+    if (r.kind !== "dynamic") continue;
+    L.push(`-- Inside Source`, `[Id: 1] access-list ${r.acl} ${r.iface ? `interface ${longIf(r.iface)}` : `pool ${r.pool}`}${r.overload ? " overload" : ""} refcount ${list.filter((e) => e.kind !== "static").length}`);
+    const pool = d.nat!.pools.find((p) => p.name === r.pool);
+    if (pool) {
+      const total = ipToInt(pool.end) - ipToInt(pool.start) + 1;
+      const used = new Set(list.filter((e) => e.kind !== "static").map((e) => e.insideGlobal)).size;
+      L.push(` pool ${pool.name}: netmask ${dottedMask(pool.len)}`, `\tstart ${pool.start} end ${pool.end}`, `\ttype generic, total addresses ${total}, allocated ${used} (${Math.round((100 * used) / total)}%), misses ${st.misses}`);
+    }
+  }
+  return L.join("\n");
+}
+
+// --- DHCP ---------------------------------------------------------------------------
+
+export function showDhcpBinding(net: Net, dev: string): string {
+  const list = net.dhcpBindings.get(dev) ?? [];
+  const rows = [
+    "Bindings from all pools not associated with VRF:",
+    "IP address      Client-ID/              Lease expiration        Type       State      Interface",
+    "                Hardware address/",
+    "                User name",
+  ];
+  for (const b of list) rows.push(`${pad(b.ip, 16)}${pad(("01" + b.mac.replace(/\./g, "")).replace(/(.{4})(?=.)/g, "$1."), 24)}${pad("Nov 01 2026 10:00 AM", 24)}${pad("Automatic", 11)}${pad("Active", 11)}${longIf(b.iface)}`);
+  if (!list.length) rows.push("(no bindings: run 'ip dhcp' on a client)");
+  return rows.join("\n");
+}
+
+export function showDhcpPool(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.dhcp?.pools.length) return "(no DHCP pools configured)";
+  const L: string[] = [];
+  const binds = net.dhcpBindings.get(dev) ?? [];
+  for (const p of d.dhcp.pools) {
+    const c = p.network ? parseCidr(p.network) : null;
+    const size = c ? Math.max(0, 2 ** (32 - c.len) - 2) : 0;
+    const excl = c
+      ? d.dhcp.excluded.reduce((n, e) => {
+          let k = 0;
+          for (let x = ipToInt(e.start); x <= ipToInt(e.end); x++) if (inCidr(intToIp(x), c)) k++;
+          return n + k;
+        }, 0)
+      : 0;
+    const leased = binds.filter((b) => b.pool === p.name).length;
+    L.push(
+      `Pool ${p.name} :`,
+      ` Utilization mark (high/low)    : 100 / 0`,
+      ` Subnet size (first/next)       : 0 / 0`,
+      ` Total addresses                : ${size}`,
+      ` Leased addresses               : ${leased}`,
+      ` Excluded addresses             : ${excl}`,
+      ` Network                        : ${p.network ?? "(not set: this pool can't hand out addresses)"}`,
+      ` Default router                 : ${p.gateway ?? "(not set: clients get no gateway)"}`,
+      ` DNS server                     : ${p.dns ?? "-"}`,
+      "",
+    );
+  }
+  return L.join("\n");
+}
+
+export function showDhcpConflict(net: Net, dev: string): string {
+  const list = net.dhcpConflicts.get(dev) ?? [];
+  const rows = ["IP address        Detection method   Detection time          VRF"];
+  for (const ip of list) rows.push(`${pad(ip, 18)}${pad("Ping", 19)}Nov 01 2026 10:00 AM`);
+  if (!list.length) rows.push("(no conflicts)");
   return rows.join("\n");
 }

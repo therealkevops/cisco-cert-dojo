@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import type { ProbeResult, SimEvent } from "@/lib/net/engine";
 
-export type Run = { kind: "ping" | "trace"; src: string; dst: string; header: string; probes: ProbeResult[]; error?: string };
+export type Run = { kind: "ping" | "trace" | "dhcp"; src: string; dst: string; header: string; probes: ProbeResult[]; error?: string };
 
 type Props = {
   run: Run;
@@ -22,6 +22,11 @@ type Props = {
 const KIND_LABEL: Record<SimEvent["kind"], string> = { tx: "WIRE", proc: "DECIDE", drop: "DROP", deliver: "DELIVER", ignore: "IGNORE", filter: "FILTER" };
 
 function consoleText(run: Run, nameOf: (ip: string) => string) {
+  if (run.kind === "dhcp") {
+    const ok = run.probes[0]?.mark === "!";
+    const ack = run.probes[0]?.events.find((e) => e.frame.dhcp?.op === "ACK" && e.kind === "deliver");
+    return [`${run.src}> ip dhcp`, ok ? `DORA complete: ${ack?.frame.dhcp?.yiaddr ?? ""}` : "No DHCPOFFER received (APIPA)", "", "Step through the walk to see who heard the DISCOVER and why."].join("\n");
+  }
   if (run.error) return `${run.src}> ${run.kind === "ping" ? "ping" : "tracert"} ${run.dst}\n% ${run.error}`;
   if (run.kind === "ping") {
     const ok = run.probes.filter((p) => p.mark === "!").length;
@@ -45,7 +50,7 @@ function Pdu({ e }: { e: SimEvent }) {
   const f = e.frame;
   return (
     <div className="pdu">
-      {f.src && (
+      {f.src && !f.dhcp && (
         <div className="pdu-layer">
           <span className="silk">L2 · Ethernet II</span>
           <span>
@@ -58,6 +63,34 @@ function Pdu({ e }: { e: SimEvent }) {
           )}
           <span>type {f.arp ? "0x0806 ARP" : "0x0800 IPv4"}</span>
         </div>
+      )}
+      {f.dhcp && (
+        <>
+          <div className="pdu-layer">
+            <span className="silk">L3 · IPv4</span>
+            <span>
+              src <b>{f.dhcp.srcIp}</b> dst <b>{f.dhcp.dstIp}</b>
+            </span>
+          </div>
+          <div className="pdu-layer">
+            <span className="silk">L4 · UDP {f.dhcp.op === "DISCOVER" || f.dhcp.op === "REQUEST" ? (f.dhcp.relayed ? "67 → 67 (relayed)" : "68 → 67") : "67 → 68"}</span>
+            <span>
+              DHCP<b>{f.dhcp.op}</b> xid 0x{f.dhcp.xid.toString(16)} chaddr {f.dhcp.chaddr}
+              {f.dhcp.yiaddr && (
+                <>
+                  {" "}
+                  yiaddr <b>{f.dhcp.yiaddr}</b>
+                </>
+              )}
+              {f.dhcp.giaddr && (
+                <>
+                  {" "}
+                  giaddr <b>{f.dhcp.giaddr}</b>
+                </>
+              )}
+            </span>
+          </div>
+        </>
       )}
       {f.arp && (
         <div className="pdu-layer">

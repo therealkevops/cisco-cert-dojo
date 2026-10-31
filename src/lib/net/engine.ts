@@ -1,6 +1,7 @@
 import type { Ace, ChannelMode, Device, Port, Topology } from "./types";
-import { aclAddrMatch, cidrNet, inCidr, parseCidr, type Cidr } from "./ip";
+import { aclAddrMatch, cidrNet, inCidr, intToIp, ipToInt, parseCidr, type Cidr } from "./ip";
 import { computeOspf, type OspfResult } from "./ospf";
+import type { DhcpBinding } from "./dhcp";
 
 // Wire Room engine: a deterministic, event-recording model of Ethernet
 // switching (VLANs, 802.1Q trunks, per-VLAN spanning tree, MAC learning),
@@ -15,8 +16,30 @@ const STP_COST = 4; // 1 Gb/s short-mode cost
 
 export type Arp = { op: "request" | "reply"; senderIp: string; senderMac: string; targetIp: string; targetMac?: string };
 export type IcmpType = "echo-request" | "echo-reply" | "time-exceeded" | "unreachable";
-export type Pkt = { src: string; dst: string; ttl: number; icmp: { type: IcmpType; seq: number } };
-export type Frame = { src: string; dst: string; arp?: Arp; ip?: Pkt };
+/** ICMP `id` is the query identifier that PAT rewrites like a port number. */
+export type Pkt = { src: string; dst: string; ttl: number; icmp: { type: IcmpType; seq: number; id?: number } };
+
+export type NatEntry = {
+  kind: "static" | "dynamic" | "pat";
+  insideLocal: string;
+  insideGlobal: string;
+  localId?: number;
+  globalId?: number;
+  outside?: string;
+  hits: number;
+};
+export type DhcpMsg = {
+  op: "DISCOVER" | "OFFER" | "REQUEST" | "ACK" | "NAK";
+  srcIp: string;
+  dstIp: string;
+  xid: number;
+  chaddr: string;
+  yiaddr?: string;
+  giaddr?: string;
+  server?: string;
+  relayed?: boolean;
+};
+export type Frame = { src: string; dst: string; arp?: Arp; ip?: Pkt; dhcp?: DhcpMsg };
 
 export type SimEvent = {
   id: number;
@@ -96,6 +119,11 @@ export class Net {
   private ospfCache?: OspfResult;
   macTables = new Map<string, Map<string, { port: string; vlan: number; mac: string }>>();
   arpTables = new Map<string, Map<string, { mac: string; iface: string }>>();
+  natTables = new Map<string, NatEntry[]>();
+  natStats = new Map<string, { hits: number; misses: number }>();
+  /** DHCP server state: bindings and ping-check conflicts per server device. */
+  dhcpBindings = new Map<string, DhcpBinding[]>();
+  dhcpConflicts = new Map<string, string[]>();
   private pending = new Map<string, { nextHop: string; pkt: Pkt; iface: string }[]>();
 
   // Per-probe run state.
@@ -248,6 +276,10 @@ export class Net {
       }
       this.arpTables.set(dev, keep);
     }
+    // Dynamic NAT state survives edits as long as the device still does NAT.
+    for (const [dev, list] of prev.natTables) if (this.devs.get(dev)?.nat) this.natTables.set(dev, list.map((e) => ({ ...e })));
+    for (const [dev, list] of prev.dhcpBindings) if (this.devs.get(dev)?.dhcp) this.dhcpBindings.set(dev, list.filter((b) => this.devs.has(b.client)).map((b) => ({ ...b })));
+    for (const [dev, list] of prev.dhcpConflicts) if (this.devs.get(dev)?.dhcp) this.dhcpConflicts.set(dev, [...list]);
   }
 
   // --- lookups ---------------------------------------------------------------
@@ -638,8 +670,15 @@ export class Net {
     }
     if (frame.arp) {
       const a = frame.arp;
-      if (a.targetIp !== ifc.cidr.ip) {
+      const natProxy = a.targetIp !== ifc.cidr.ip && this.natRole(d, ifc.name) === "outside" && inCidr(a.targetIp, ifc.cidr) && this.natGlobals(d).has(a.targetIp);
+      if (a.targetIp !== ifc.cidr.ip && !natProxy) {
         this.log({ dev: d.id, kind: "ignore", frame, note: `the ARP is for ${a.targetIp}, which is not my address, so I ignore it` });
+        return;
+      }
+      if (natProxy && a.op === "request") {
+        this.learnArp(d.id, a.senderIp, a.senderMac, ifc.name);
+        this.log({ dev: d.id, kind: "proc", frame, note: `"who has ${a.targetIp}?" That is a NAT global address I translate for, so I answer with my own MAC ${ifc.mac} on ${ifc.name}` });
+        this.emit(d, ifc, { src: ifc.mac, dst: a.senderMac, arp: { op: "reply", senderIp: a.targetIp, senderMac: ifc.mac, targetIp: a.senderIp, targetMac: a.senderMac } });
         return;
       }
       this.learnArp(d.id, a.senderIp, a.senderMac, ifc.name);
@@ -654,8 +693,10 @@ export class Net {
       return;
     }
     if (!frame.ip) return;
-    const pkt = frame.ip;
+    let pkt = frame.ip;
     if (ifc.aclIn && !this.aclPermits(d, ifc.aclIn, pkt, `inbound on ${ifc.name}`, frame)) return;
+    // Outside → inside: NAT happens before routing.
+    if (d.nat && this.natRole(d, ifc.name) === "outside") pkt = this.natIn(d, pkt, frame);
 
     const mine = this.l3Ifs(d.id).some((i) => i.up && i.cidr.ip === pkt.dst);
     if (mine) {
@@ -677,10 +718,143 @@ export class Net {
       this.icmpError(d, pkt, "unreachable", ifc.cidr.ip);
       return;
     }
-    const fwd: Pkt = { ...pkt, ttl: pkt.ttl - 1 };
-    if (r.iface.aclOut && !this.aclPermits(d, r.iface.aclOut, fwd, `outbound on ${r.iface.name}`, frame)) return;
+    let fwd: Pkt = { ...pkt, ttl: pkt.ttl - 1 };
     this.log({ dev: d.id, kind: "proc", frame, note: `routing ${pkt.src} → ${pkt.dst}: ${r.why}. TTL ${pkt.ttl} → ${fwd.ttl}, and the frame gets new MAC addresses` });
+    // Inside → outside: NAT happens after routing, before the outbound ACL.
+    if (d.nat && this.natRole(d, ifc.name) === "inside" && this.natRole(d, r.iface.name) === "outside") {
+      const t = this.natOut(d, fwd, frame);
+      if (!t) return;
+      fwd = t;
+    }
+    if (r.iface.aclOut && !this.aclPermits(d, r.iface.aclOut, fwd, `outbound on ${r.iface.name}`, frame)) return;
     this.sendVia(d, r.iface, r.nextHop, fwd);
+  }
+
+  // --- NAT -----------------------------------------------------------------------
+
+  natRole(d: Device, ifName: string): "inside" | "outside" | undefined {
+    if (ifName.startsWith("Vlan")) return d.svis?.find((s) => `Vlan${s.vlan}` === ifName)?.nat;
+    return d.ports.find((p) => p.name === ifName)?.nat;
+  }
+
+  /** Addresses this device owns as NAT globals: static globals and pool addresses. */
+  natGlobals(d: Device): Set<string> {
+    const out = new Set<string>();
+    for (const r of d.nat?.rules ?? []) if (r.kind === "static") out.add(r.global);
+    for (const p of d.nat?.pools ?? []) for (let n = ipToInt(p.start); n <= ipToInt(p.end) && n - ipToInt(p.start) < 1024; n++) out.add(intToIp(n));
+    return out;
+  }
+
+  /** Silent ACL check (NAT uses ACLs to select traffic, not to filter it). */
+  aclMatch(d: Device, name: string, pkt: Pkt): boolean {
+    for (const ace of d.acls?.[name] ?? []) {
+      if ((ace.proto === "ip" || ace.proto === "icmp") && aclAddrMatch(ace.src, pkt.src) && aclAddrMatch(ace.dst, pkt.dst)) return ace.action === "permit";
+    }
+    return false;
+  }
+
+  private stat(dev: string, hit: boolean) {
+    const s = this.natStats.get(dev) ?? { hits: 0, misses: 0 };
+    if (hit) s.hits++;
+    else s.misses++;
+    this.natStats.set(dev, s);
+  }
+
+  /** Outside → inside: rewrite the destination from inside global back to inside local. */
+  private natIn(d: Device, pkt: Pkt, frame: Frame): Pkt {
+    const table = this.natTables.get(d.id) ?? [];
+    let e = table.find((x) => x.insideGlobal === pkt.dst && (x.kind !== "pat" || x.globalId === pkt.icmp.id));
+    if (!e) {
+      const st = d.nat!.rules.find((r) => r.kind === "static" && r.global === pkt.dst);
+      if (st && st.kind === "static") {
+        e = { kind: "static", insideLocal: st.local, insideGlobal: st.global, hits: 0 };
+        this.natTables.set(d.id, [...table, e]);
+      }
+    }
+    if (!e) return pkt;
+    e.hits++;
+    this.stat(d.id, true);
+    const out: Pkt = { ...pkt, dst: e.insideLocal, icmp: { ...pkt.icmp, id: e.kind === "pat" ? e.localId : pkt.icmp.id } };
+    this.log({
+      dev: d.id,
+      kind: "proc",
+      frame: { ...frame, ip: out },
+      note: `NAT outside→inside, before routing: destination ${pkt.dst}${e.kind === "pat" ? `:${e.globalId}` : ""} (inside global) becomes ${e.insideLocal}${e.kind === "pat" ? `:${e.localId}` : ""} (inside local)`,
+    });
+    return out;
+  }
+
+  /** Inside → outside: find or create a translation and rewrite the source. Returns null when the packet must be dropped. */
+  private natOut(d: Device, pkt: Pkt, frame: Frame): Pkt | null {
+    const table = this.natTables.get(d.id) ?? [];
+    this.natTables.set(d.id, table);
+    const say = (e: NatEntry, how: string): Pkt => {
+      e.hits++;
+      e.outside = pkt.dst;
+      this.stat(d.id, true);
+      const out: Pkt = { ...pkt, src: e.insideGlobal, icmp: { ...pkt.icmp, id: e.kind === "pat" ? e.globalId : pkt.icmp.id } };
+      this.log({
+        dev: d.id,
+        kind: "proc",
+        frame: { ...frame, ip: out },
+        note: `NAT inside→outside, after routing: source ${pkt.src}${e.kind === "pat" ? `:${pkt.icmp.id}` : ""} (inside local) becomes ${e.insideGlobal}${e.kind === "pat" ? `:${e.globalId}` : ""} (inside global), ${how}`,
+      });
+      return out;
+    };
+    // A static mapping always wins over dynamic translations for the same host.
+    const st = d.nat!.rules.find((r) => r.kind === "static" && r.local === pkt.src);
+    if (st && st.kind === "static") {
+      let e = table.find((x) => x.kind === "static" && x.insideLocal === st.local);
+      if (!e) table.push((e = { kind: "static", insideLocal: st.local, insideGlobal: st.global, hits: 0 }));
+      return say(e, "from a static mapping");
+    }
+    const existing = table.find((x) => x.kind !== "static" && x.insideLocal === pkt.src && (x.kind !== "pat" || x.localId === pkt.icmp.id));
+    if (existing) return say(existing, `using the existing ${existing.kind === "pat" ? "PAT" : existing.kind} translation`);
+
+    for (const r of d.nat!.rules) {
+      if (r.kind === "static") continue;
+      if (!this.aclMatch(d, r.acl, pkt)) continue;
+      let global: string | undefined;
+      if (r.iface) {
+        global = this.l3Ifs(d.id).find((i) => i.name === r.iface && i.up)?.cidr.ip;
+        if (!global) {
+          this.log({ dev: d.id, kind: "drop", frame, note: `NAT rule for ACL ${r.acl} overloads ${r.iface}, but that interface has no usable IP address. Translation failed, packet dropped` });
+          this.stat(d.id, false);
+          return null;
+        }
+      } else {
+        const pool = d.nat!.pools.find((p) => p.name === r.pool);
+        if (!pool) {
+          this.log({ dev: d.id, kind: "drop", frame, note: `NAT rule for ACL ${r.acl} refers to pool ${r.pool}, which doesn't exist. Translation failed, packet dropped` });
+          this.stat(d.id, false);
+          return null;
+        }
+        const addrs: string[] = [];
+        for (let n = ipToInt(pool.start); n <= ipToInt(pool.end) && addrs.length < 1024; n++) addrs.push(intToIp(n));
+        if (r.overload) global = addrs[0];
+        else {
+          global = addrs.find((a) => !table.some((x) => x.insideGlobal === a));
+          if (!global) {
+            this.log({ dev: d.id, kind: "drop", frame, note: `NAT pool ${pool.name} is exhausted: all ${addrs.length} address${addrs.length > 1 ? "es are" : " is"} in use and the rule has no 'overload'. ${pkt.src} gets no translation, so the packet is dropped` });
+            this.stat(d.id, false);
+            return null;
+          }
+          const e: NatEntry = { kind: "dynamic", insideLocal: pkt.src, insideGlobal: global, hits: 0 };
+          table.push(e);
+          return say(e, `with a new one-to-one translation from pool ${pool.name}`);
+        }
+      }
+      // PAT: keep the original identifier if it's free on this global address, else pick from 1024 up.
+      const used = new Set(table.filter((x) => x.insideGlobal === global && x.kind === "pat").map((x) => x.globalId));
+      let gid = pkt.icmp.id ?? 1;
+      if (used.has(gid)) for (gid = 1024; used.has(gid); gid++);
+      const e: NatEntry = { kind: "pat", insideLocal: pkt.src, insideGlobal: global!, localId: pkt.icmp.id, globalId: gid, hits: 0 };
+      table.push(e);
+      return say(e, `with a new PAT (overload) translation matched by ACL ${r.acl}`);
+    }
+    this.stat(d.id, false);
+    this.log({ dev: d.id, kind: "proc", frame, note: `no NAT rule matches ${pkt.src}, so it leaves untranslated. A private source address usually means the reply can't come back` });
+    return pkt;
   }
 
   private aclPermits(d: Device, name: string, pkt: Pkt, where: string, frame: Frame): boolean {
@@ -700,7 +874,7 @@ export class Net {
   private deliver(d: Device, pkt: Pkt, frame: Frame) {
     if (pkt.icmp.type === "echo-request") {
       this.log({ dev: d.id, kind: "deliver", frame, note: `echo request #${pkt.icmp.seq} from ${pkt.src} reached me. Sending an echo reply` });
-      this.originate(d, { src: pkt.dst, dst: pkt.src, ttl: 255, icmp: { type: "echo-reply", seq: pkt.icmp.seq } });
+      this.originate(d, { src: pkt.dst, dst: pkt.src, ttl: 255, icmp: { type: "echo-reply", seq: pkt.icmp.seq, id: pkt.icmp.id } });
       return;
     }
     const msg =
@@ -830,7 +1004,7 @@ export class Net {
     const probes: ProbeResult[] = [];
     for (let seq = 1; seq <= count; seq++) {
       this.startProbe(src);
-      this.originate(this.devs.get(src)!, { src: s, dst, ttl: 64, icmp: { type: "echo-request", seq } });
+      this.originate(this.devs.get(src)!, { src: s, dst, ttl: 64, icmp: { type: "echo-request", seq, id: 1 } });
       this.run();
       probes.push({ seq, mark: this.probeHit?.icmp === "echo-reply" ? "!" : this.probeHit?.mark === "U" ? "U" : ".", from: this.probeHit?.from, events: this.events });
     }

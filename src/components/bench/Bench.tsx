@@ -936,7 +936,7 @@ export function Bench({ scenario }: { scenario?: Scenario }) {
             ) : null}
             {run && activeTab !== "walk" && (
               <button className="walk-peek" onClick={() => setActiveTab("walk")}>
-                ✉ last {run.kind === "ping" ? "ping" : "trace"}: {run.probes.map((p) => p.mark).join("")} · open packet walk
+                ✉ last {run.kind === "dhcp" ? "DHCP" : run.kind === "ping" ? "ping" : "trace"}: {run.probes.map((p) => p.mark).join("")} · open packet walk
               </button>
             )}
           </div>
@@ -1088,7 +1088,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           </tbody>
         </table>
         <p className="silk" style={{ marginTop: 10 }}>
-          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), ACLs, ICMP. Not yet: EIGRP/BGP, NAT, DHCP, subinterfaces.
+          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), ACLs, NAT/PAT, DHCP server and relay, ICMP. Not yet: EIGRP/BGP, subinterfaces, TCP/UDP application traffic.
         </p>
       </div>
     </div>
