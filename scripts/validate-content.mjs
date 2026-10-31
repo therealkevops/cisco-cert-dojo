@@ -9,6 +9,7 @@ import { initialState, runLine } from "../src/lib/terminal.ts";
 import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
 import { Net } from "../src/lib/net/engine.ts";
+import { newSession, runCli } from "../src/lib/ios/cli.ts";
 
 const errors = [];
 const fail = (m) => errors.push(m);
@@ -94,7 +95,34 @@ for (const sc of scenarios) {
   const after = gradeGoals(t, sc.goals);
   for (const g of after) if (!g.ok) fail(`wire ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
 }
-console.log(`wire   ${scenarios.length} scenarios`);
+// The same challenges solved the way a learner would: typing into the consoles.
+const cliFixes = {
+  "wrong-vlan": [["ASW2", "en", "conf t", "int g1/0/2", "sw acc vlan 20", "end"]],
+  "pruned-trunk": [["ASW2", "en", "conf t", "int g1/0/1", "sw tr al vl add 20", "end"]],
+  "return-route": [["R1", "en", "conf t", "ip route 10.20.20.0 255.255.255.0 10.0.0.1", "end"]],
+  "acl-guest": [["R1", "en", "conf t", "ip access-list extended EDGE", "no 10", "10 deny ip 10.30.30.0 0.0.0.255 192.0.2.0 0.0.0.255", "end"]],
+  "stp-root": [["DSW1", "en", "conf t", "spanning-tree vlan 10,20 root primary", "end"]],
+  "dead-gateway": [
+    ["PC-A", "ip 10.10.10.11/24 10.10.10.1"],
+    ["DSW1", "en", "conf t", "int vlan 10", "no shut", "end"],
+  ],
+};
+for (const sc of scenarios) {
+  if (sc.kind !== "challenge") continue;
+  let topo = structuredClone(sc.topology);
+  let net = new Net(topo);
+  for (const [dev, ...lines] of cliFixes[sc.id] ?? []) {
+    let s = newSession(dev, topo.devices.find((d) => d.id === dev).kind);
+    for (const line of lines) {
+      const r = runCli(line, s, topo, net);
+      if (/^\s*\^|% (Invalid|Ambiguous|Incomplete)/m.test(r.out)) fail(`wire ${sc.id}: CLI rejected "${line}" on ${dev}: ${r.out}`);
+      s = r.session;
+      if (r.topo) ((topo = r.topo), (net = new Net(topo, net)));
+    }
+  }
+  for (const g of gradeGoals(topo, sc.goals)) if (!g.ok) fail(`wire ${sc.id}: CLI fix fails "${g.goal.label}" (${g.detail})`);
+}
+console.log(`wire   ${scenarios.length} scenarios (data + CLI fixes)`);
 
 if (errors.length) {
   console.error("\n" + errors.map((e) => "✗ " + e).join("\n"));

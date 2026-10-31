@@ -17,6 +17,7 @@ export type Port = {
   ip?: string;
   aclIn?: string;
   aclOut?: string;
+  description?: string;
 };
 
 export type Svi = { vlan: number; ip: string; shutdown?: boolean; aclIn?: string; aclOut?: string };
@@ -24,8 +25,10 @@ export type Svi = { vlan: number; ip: string; shutdown?: boolean; aclIn?: string
 export type StaticRoute = { prefix: string; via: string };
 
 export type Ace = {
+  seq?: number;
   action: "permit" | "deny";
-  proto: "ip" | "icmp";
+  /** Only ICMP traffic is simulated, so tcp/udp entries never match a ping. */
+  proto: "ip" | "icmp" | "tcp" | "udp";
   /** "any", "host 1.2.3.4" or "10.0.0.0/8" */
   src: string;
   dst: string;
@@ -43,12 +46,21 @@ export type Device = {
   gateway?: string;
   /** Switches only. Default 32768. */
   stpPriority?: number;
+  /** Per-VLAN override, from `spanning-tree vlan N priority P`. */
+  stpVlanPriority?: Record<string, number>;
+  /** Powered off: every link on it is down. */
+  off?: boolean;
+  /** Locked devices can't be dragged on the canvas. */
+  locked?: boolean;
   acls?: Record<string, Ace[]>;
 };
 
 export type Link = { a: [string, string]; b: [string, string] };
 
-export type Topology = { devices: Device[]; links: Link[] };
+/** Canvas annotations: free text or a labelled rectangle. */
+export type Note = { id: string; kind: "text" | "rect"; x: number; y: number; w: number; h: number; text: string };
+
+export type Topology = { devices: Device[]; links: Link[]; notes?: Note[] };
 
 export type Goal =
   | { type: "reach"; from: string; to: string; expect: boolean; label: string }

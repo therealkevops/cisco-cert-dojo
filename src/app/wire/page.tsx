@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { WireList } from "@/components/wire/WireList";
+import { Bench } from "@/components/bench/Bench";
 
 export const metadata: Metadata = { title: "Wire Room · Cert Dojo" };
 
 export default function WirePage() {
-  return <WireList />;
+  return <Bench />;
 }

@@ -104,14 +104,15 @@ export function RackView() {
           Open simulator →
         </Link>
       </div>
-      <Link href="/wire/campus" className="blank" style={{ textDecoration: "none", borderStyle: "solid" }}>
-        <b>Topology simulator</b>
+      <Link href="/wire" className="blank" style={{ textDecoration: "none", borderStyle: "solid" }}>
+        <b>Network canvas</b>
         <p>
-          Drag one device onto another to ping it. The path lights up on the map, and every ARP, MAC lookup, spanning-tree block and routing
-          decision is explained. Includes {scenarios.filter((s) => s.kind === "challenge").length} troubleshooting challenges.
+          Build any topology: drop routers, switches and hosts, cable them port to port, and configure each one from its own IOS-style
+          console. Send a packet and watch every hop. Includes {scenarios.filter((s) => s.kind === "challenge").length} troubleshooting
+          challenges.
         </p>
         <span className="silk">
-          {Object.keys(p.wire).length} solved · open sandbox →
+          {Object.keys(p.wire).length} solved · open canvas →
         </span>
       </Link>
 

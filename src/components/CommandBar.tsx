@@ -23,7 +23,8 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
     const list: Cmd[] = [
       { name: "rack", help: "home: every chassis and its port lights", run: go("/") },
       { name: "labs", help: "list all CLI labs", run: go("/labs") },
-      { name: "wire", help: "topology simulator: ping, traceroute, packet walk", run: go("/wire") },
+      { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
+      { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
     ];
     for (const e of examList) {
       list.push({ name: `study ${e.id}`, help: `${e.short} ${e.code} blueprint and field notes`, run: go(`/exam/${e.id}`) });

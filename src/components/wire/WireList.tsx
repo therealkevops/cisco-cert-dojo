@@ -11,22 +11,24 @@ export function WireList() {
     <main className="page">
       <section className="hero">
         <div>
-          <span className="silk">Topology simulator</span>
+          <span className="silk">Wire Room · troubleshooting challenges</span>
           <h1 className="display">
-            The wire <em>room.</em>
+            Fix the <em>network.</em>
           </h1>
           <p className="lede">
-            A live campus network in your browser. Drag one device onto another to ping it, and the path lights up instantly: request in amber,
-            reply in green, a red ✕ where a packet died. Step through every frame to see the ARP, the MAC learning, the spanning-tree blocking
-            and the routing decision, each explained in plain language.
+            Each challenge opens a broken campus on the canvas. Use the device consoles (real IOS-style commands) and the packet tool to find the
+            fault, fix it, then press Verify. Grading checks the outcome, so any valid fix passes.
           </p>
+          <Link className="sw primary" href="/wire" style={{ marginTop: 16 }}>
+            Open the blank sandbox →
+          </Link>
         </div>
         <div className="readout num">
           <span>
             <b>challenges</b> {challenges.filter((c) => p.wire[c.id]).length}/{challenges.length} solved
           </span>
           <span>
-            <b>models</b> VLANs · 802.1Q · RSTP · ARP · IPv4 · static routes · ACLs · ICMP
+            <b>models</b> VLANs · 802.1Q · RSTP · ARP · IPv4 · static routes · ACLs · ICMP · IOS-style CLI
           </span>
         </div>
       </section>
@@ -36,7 +38,7 @@ export function WireList() {
             <span className="silk">{s.kind}</span>
             <span className="silk">{s.objective}</span>
             <span className="title">{s.title}</span>
-            <span className={`state ${p.wire[s.id] ? "done" : ""}`}>{s.kind === "sandbox" ? "explore" : p.wire[s.id] ? "solved ✓" : `${s.goals.length} checks`}</span>
+            <span className={`state ${p.wire[s.id] ? "done" : ""}`}>{s.kind === "sandbox" ? "example" : p.wire[s.id] ? "solved ✓" : `${s.goals.length} checks`}</span>
           </Link>
         ))}
       </div>

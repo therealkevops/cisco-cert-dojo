@@ -58,6 +58,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // The Wire Room canvas is a full-screen app: no rack rails or status line.
+  const bare = path === "/wire" || (path.startsWith("/wire/") && path !== "/wire/challenges");
+  if (bare)
+    return (
+      <>
+        {children}
+        {cmdOpen && <CommandBar onClose={() => setCmdOpen(false)} toggleTheme={toggle} />}
+      </>
+    );
+
   return (
     <div className="frame">
       <Rail />

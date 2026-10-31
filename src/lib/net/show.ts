@@ -1,5 +1,5 @@
 import type { Net } from "./engine";
-import { dottedMask } from "./ip";
+import { aclSpecToIos, dottedMask } from "./ip";
 
 // IOS-flavoured renderings of simulator state, so the inspector reads like a
 // console and the same text can back a CLI later.
@@ -17,7 +17,7 @@ export function showIpIntBrief(net: Net, dev: string): string {
   }
   for (const s of d.svis ?? []) {
     const up = net.sviUp(d, s.vlan);
-    rows.push(pad(`Vlan${s.vlan}`, 22) + pad(s.ip.split("/")[0], 16) + pad(s.shutdown ? "administratively down" : up ? "up" : "down", 22) + (up ? "up" : "down"));
+    rows.push(pad(`Vlan${s.vlan}`, 22) + pad(s.ip.split("/")[0] || "unassigned", 16) + pad(s.shutdown ? "administratively down" : up ? "up" : "down", 22) + (up ? "up" : "down"));
   }
   return rows.join("\n");
 }
@@ -96,7 +96,7 @@ export function showSpanningTree(net: Net, dev: string, vlan: number): string {
 export function showVlanBrief(net: Net, dev: string): string {
   const d = net.device(dev);
   const rows = ["VLAN Name                             Status    Ports", "---- -------------------------------- --------- -------------------------------"];
-  const vlans = new Set<number>();
+  const vlans = new Set<number>([1]);
   for (const p of d.ports) if (net.portMode(d, p) === "access") vlans.add(p.vlan ?? 1);
   for (const s of d.svis ?? []) vlans.add(s.vlan);
   for (const v of [...vlans].sort((a, b) => a - b)) {
@@ -133,11 +133,136 @@ export function showAcls(net: Net, dev: string): string {
   const lines: string[] = [];
   for (const n of names) {
     lines.push(`Extended IP access list ${n}`);
-    d.acls![n].forEach((a, i) => lines.push(`    ${(i + 1) * 10} ${a.action} ${a.proto} ${a.src} ${a.dst}`));
+    d.acls![n].forEach((a, i) => lines.push(`    ${a.seq ?? (i + 1) * 10} ${a.action} ${a.proto} ${a.src} ${a.dst}`));
     const where = [...d.ports, ...(d.svis ?? []).map((s) => ({ ...s, name: `Vlan${s.vlan}` }))]
       .flatMap((p) => [p.aclIn === n ? `${p.name} in` : "", p.aclOut === n ? `${p.name} out` : ""])
       .filter(Boolean);
     lines.push(`    (applied: ${where.length ? where.join(", ") : "not applied"})`);
   }
   return lines.join("\n");
+}
+
+const LONG: Record<string, string> = { Gi: "GigabitEthernet", Fa: "FastEthernet", Te: "TenGigabitEthernet", Po: "Port-channel" };
+
+/** "Gi0/1" → "GigabitEthernet0/1". */
+export function longIf(name: string): string {
+  const m = name.match(/^([A-Za-z]+)(.*)$/);
+  return m && LONG[m[1]] ? LONG[m[1]] + m[2] : name;
+}
+
+export function showRun(net: Net, dev: string): string {
+  const d = net.device(dev);
+  const L: string[] = ["Building configuration...", "", "Current configuration:", "!", `hostname ${d.id}`, "!"];
+  if (net.isSwitch(d)) {
+    L.push("spanning-tree mode rapid-pvst");
+    if (d.stpPriority !== undefined) L.push(`spanning-tree vlan 1-4094 priority ${d.stpPriority}`);
+    for (const [v, p] of Object.entries(d.stpVlanPriority ?? {})) L.push(`spanning-tree vlan ${v} priority ${p}`);
+    L.push("!");
+  }
+  if (d.kind === "l3switch") L.push("ip routing", "!");
+  if (d.kind === "switch" && d.gateway) L.push(`ip default-gateway ${d.gateway}`, "!");
+  for (const p of d.ports) {
+    L.push(`interface ${longIf(p.name)}`);
+    if (p.description) L.push(` description ${p.description}`);
+    const mode = net.portMode(d, p);
+    if (net.isSwitch(d)) {
+      if (mode === "routed") L.push(" no switchport");
+      else if (mode === "trunk") {
+        if (p.native && p.native !== 1) L.push(` switchport trunk native vlan ${p.native}`);
+        if (p.allowed) L.push(` switchport trunk allowed vlan ${p.allowed.join(",")}`);
+        L.push(" switchport mode trunk");
+      } else {
+        if ((p.vlan ?? 1) !== 1) L.push(` switchport access vlan ${p.vlan}`);
+        L.push(" switchport mode access");
+      }
+    }
+    if (p.ip && mode === "routed") {
+      const [ip, len] = p.ip.split("/");
+      L.push(` ip address ${ip} ${dottedMask(Number(len))}`);
+    } else if (mode === "routed" && !net.isHost(d)) L.push(" no ip address");
+    if (p.aclIn) L.push(` ip access-group ${p.aclIn} in`);
+    if (p.aclOut) L.push(` ip access-group ${p.aclOut} out`);
+    if (p.shutdown) L.push(" shutdown");
+    L.push("!");
+  }
+  for (const s of d.svis ?? []) {
+    const [ip, len] = s.ip.split("/");
+    L.push(`interface Vlan${s.vlan}`, s.ip ? ` ip address ${ip} ${dottedMask(Number(len))}` : " no ip address");
+    if (s.aclIn) L.push(` ip access-group ${s.aclIn} in`);
+    if (s.aclOut) L.push(` ip access-group ${s.aclOut} out`);
+    if (s.shutdown) L.push(" shutdown");
+    L.push("!");
+  }
+  for (const r of d.routes ?? []) {
+    const [ip, len] = r.prefix.split("/");
+    L.push(`ip route ${ip} ${dottedMask(Number(len))} ${r.via}`);
+  }
+  if (d.routes?.length) L.push("!");
+  for (const [name, aces] of Object.entries(d.acls ?? {})) {
+    L.push(`ip access-list extended ${name}`);
+    aces.forEach((a, i) => L.push(` ${a.seq ?? (i + 1) * 10} ${a.action} ${a.proto} ${aclSpecToIos(a.src)} ${aclSpecToIos(a.dst)}`));
+    L.push("!");
+  }
+  L.push("end");
+  return L.join("\n");
+}
+
+export function showIntTrunk(net: Net, dev: string): string {
+  const d = net.device(dev);
+  const trunks = d.ports.filter((p) => net.portMode(d, p) === "trunk" && net.linkUp(dev, p.name));
+  if (!trunks.length) return "";
+  const vl = net.vlans();
+  const rows = ["Port        Mode             Encapsulation  Status        Native vlan"];
+  for (const t of trunks) rows.push(`${pad(t.name, 12)}${pad("on", 17)}${pad("802.1q", 15)}${pad("trunking", 14)}${t.native ?? 1}`);
+  rows.push("", "Port        Vlans allowed on trunk");
+  for (const t of trunks) rows.push(`${pad(t.name, 12)}${t.allowed ? t.allowed.join(",") : "1-4094"}`);
+  rows.push("", "Port        Vlans in spanning tree forwarding state and not pruned");
+  for (const t of trunks) {
+    const fwd = vl.filter((v) => net.carries(d, t, v) && net.forwarding(dev, t.name, v));
+    rows.push(`${pad(t.name, 12)}${fwd.join(",") || "none"}`);
+  }
+  return rows.join("\n");
+}
+
+export function showIntStatus(net: Net, dev: string): string {
+  const d = net.device(dev);
+  const rows = ["Port         Name               Status       Vlan       Duplex  Speed Type"];
+  for (const p of d.ports) {
+    const status = p.shutdown ? "disabled" : net.linkUp(dev, p.name) ? "connected" : "notconnect";
+    const mode = net.portMode(d, p);
+    const vlan = mode === "trunk" ? "trunk" : mode === "routed" ? "routed" : String(p.vlan ?? 1);
+    rows.push(`${pad(p.name, 13)}${pad((p.description ?? "").slice(0, 18), 19)}${pad(status, 13)}${pad(vlan, 11)}${pad("a-full", 8)}${pad("a-1000", 6)}10/100/1000BaseTX`);
+  }
+  return rows.join("\n");
+}
+
+export function showCdp(net: Net, dev: string): string {
+  const d = net.device(dev);
+  const caps: Record<string, string> = { router: "R", switch: "S I", l3switch: "R S I", pc: "H", server: "H" };
+  const rows = [
+    "Capability Codes: R - Router, S - Switch, H - Host, I - IGMP",
+    "",
+    "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID",
+  ];
+  for (const p of d.ports) {
+    const peer = net.peer(dev, p.name);
+    if (!peer || !net.linkUp(dev, p.name)) continue;
+    const pd = net.device(peer[0]);
+    if (net.isHost(pd)) continue; // hosts do not speak CDP
+    rows.push(`${pad(pd.id, 17)}${pad(p.name, 18)}${pad(150, 11)}${pad(caps[pd.kind], 12)}${pad(pd.kind === "router" ? "vRouter" : "vSwitch", 10)}${peer[1]}`);
+  }
+  if (rows.length === 3) rows.push("(no neighbors: CDP needs an up link to a router or switch)");
+  return rows.join("\n");
+}
+
+export function showVersion(net: Net, dev: string): string {
+  const d = net.device(dev);
+  return [
+    `Wire Room simulated ${d.kind === "router" ? "router" : d.kind === "l3switch" ? "multilayer switch" : "switch"}, IOS-style CLI`,
+    `${d.id} uptime is 0 minutes`,
+    `${d.ports.length} Gigabit Ethernet interfaces`,
+    "",
+    "Simulated: VLANs, 802.1Q, RSTP, ARP, static routing, extended ACLs, ICMP.",
+    "Not simulated yet: dynamic routing protocols, EtherChannel, NAT, subinterfaces.",
+  ].join("\n");
 }

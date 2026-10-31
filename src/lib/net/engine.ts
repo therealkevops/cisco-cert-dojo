@@ -79,7 +79,8 @@ export class Net {
   private probeSrc = "";
   private probeHit: { mark: "!" | "U"; from: string; icmp: IcmpType } | null = null;
 
-  constructor(topo: Topology) {
+  /** Pass the previous Net to keep learned MAC/ARP entries that are still valid after an edit. */
+  constructor(topo: Topology, prev?: Net) {
     this.topo = structuredClone(topo);
     this.topo.devices.forEach((d, i) => {
       this.devs.set(d.id, d);
@@ -88,6 +89,33 @@ export class Net {
     for (const l of this.topo.links) {
       this.peers.set(l.a.join("|"), l.b);
       this.peers.set(l.b.join("|"), l.a);
+    }
+    if (prev) this.inherit(prev);
+  }
+
+  private inherit(prev: Net) {
+    // MACs are derived from device/port position, so only carry entries whose
+    // devices kept their place and whose ports are still up in the same VLAN.
+    for (const [dev, table] of prev.macTables) {
+      const d = this.devs.get(dev);
+      if (!d || prev.devIdx.get(dev) !== this.devIdx.get(dev)) continue;
+      const keep = new Map<string, { port: string; vlan: number; mac: string }>();
+      for (const [k, e] of table) {
+        const p = d.ports.find((x) => x.name === e.port);
+        if (p && this.linkUp(dev, e.port) && this.carries(d, p, e.vlan)) keep.set(k, e);
+      }
+      this.macTables.set(dev, keep);
+    }
+    const allMacs = new Set(this.topo.devices.flatMap((d) => [...d.ports.map((p) => this.macOf(d.id, p.name)), this.sviMac(d.id)]));
+    for (const [dev, table] of prev.arpTables) {
+      if (!this.devs.has(dev)) continue;
+      const ifs = this.l3Ifs(dev);
+      const keep = new Map<string, { mac: string; iface: string }>();
+      for (const [ip, e] of table) {
+        const ifc = ifs.find((i) => i.name === e.iface);
+        if (ifc && ifc.up && inCidr(ip, ifc.cidr) && allMacs.has(e.mac)) keep.set(ip, e);
+      }
+      this.arpTables.set(dev, keep);
     }
   }
 
@@ -133,7 +161,7 @@ export class Net {
   linkUp(dev: string, port: string): boolean {
     const p = this.port(dev, port);
     const peer = this.peer(dev, port);
-    if (!p || !peer || p.shutdown) return false;
+    if (!p || !peer || p.shutdown || this.devs.get(dev)?.off || this.devs.get(peer[0])?.off) return false;
     const pp = this.port(peer[0], peer[1]);
     return !!pp && !pp.shutdown;
   }
@@ -161,7 +189,8 @@ export class Net {
       if (!cidr) continue;
       out.push({ dev: devId, name: p.name, cidr, mac: this.macOf(devId, p.name), kind: "port", up: this.linkUp(devId, p.name), aclIn: p.aclIn, aclOut: p.aclOut });
     }
-    if (d.kind === "l3switch") {
+    // L3 switches route between SVIs; an L2 switch's SVI is just its management address.
+    if (this.isSwitch(d)) {
       for (const s of d.svis ?? []) {
         const cidr = parseCidr(s.ip);
         if (!cidr) continue;
@@ -184,7 +213,9 @@ export class Net {
         const c = parseCidr(r.prefix);
         // A static route is installed only if its next hop is reachable via a connected network.
         const egress = ifs.find((i) => inCidr(r.via, i.cidr));
-        if (c && egress) out.push({ code: "S", prefix: cidrNet(c), cidr: c, via: r.via, iface: egress.name });
+        // A connected route (AD 0) beats a static (AD 1) for the same prefix.
+        const shadowed = c && out.some((x) => x.code === "C" && x.cidr.net === c.net && x.cidr.len === c.len);
+        if (c && egress && !shadowed) out.push({ code: "S", prefix: cidrNet(c), cidr: c, via: r.via, iface: egress.name });
       }
     }
     return out;
@@ -193,7 +224,15 @@ export class Net {
   /** Where would this device send a packet for `dst`? */
   resolve(devId: string, dst: string): { iface: L3If; nextHop: string; why: string } | { error: string } {
     const d = this.devs.get(devId)!;
+    if (d.off) return { error: `${devId} is powered off` };
     const ifs = this.l3Ifs(devId).filter((i) => i.up);
+    if (d.kind === "switch") {
+      const local = ifs.find((i) => inCidr(dst, i.cidr));
+      if (local) return { iface: local, nextHop: dst, why: `${dst} is on my management subnet ${cidrNet(local.cidr)}` };
+      const viaIf = d.gateway ? ifs.find((i) => inCidr(d.gateway!, i.cidr)) : undefined;
+      if (!viaIf) return { error: ifs.length ? `${dst} is off-subnet and no usable 'ip default-gateway' is set` : "no management SVI is up" };
+      return { iface: viaIf, nextHop: d.gateway!, why: `${dst} is off-subnet, so I use my ip default-gateway ${d.gateway}` };
+    }
     if (this.isHost(d)) {
       const nic = ifs[0];
       if (!nic) return { error: "NIC is down or has no IP address" };
@@ -221,7 +260,7 @@ export class Net {
     if (hit) return hit;
     const sws = this.topo.devices.filter((d) => this.isSwitch(d));
     const bridgeId: StpView["bridgeId"] = {};
-    for (const s of sws) bridgeId[s.id] = { prio: (s.stpPriority ?? 32768) + vlan, mac: this.bridgeMac(s.id) };
+    for (const s of sws) bridgeId[s.id] = { prio: (s.stpVlanPriority?.[vlan] ?? s.stpPriority ?? 32768) + vlan, mac: this.bridgeMac(s.id) };
     const cmpBid = (a: string, b: string) => bridgeId[a].prio - bridgeId[b].prio || bridgeId[a].mac.localeCompare(bridgeId[b].mac);
     const pIdx = (dev: string, port: string) => this.devs.get(dev)!.ports.findIndex((p) => p.name === port);
 
@@ -387,8 +426,8 @@ export class Net {
 
   private l2Switch(d: Device, vlan: number, frame: Frame, inPort: string | null, learned: string | null) {
     const pre = learned ? `${learned}. ` : "";
-    const sviMac = d.kind === "l3switch" ? this.sviMac(d.id) : null;
-    const svi = d.kind === "l3switch" && d.svis?.find((s) => s.vlan === vlan) && this.sviUp(d, vlan) ? this.l3Ifs(d.id).find((i) => i.name === `Vlan${vlan}`) : undefined;
+    const sviMac = d.svis?.length ? this.sviMac(d.id) : null;
+    const svi = d.svis?.find((s) => s.vlan === vlan) && this.sviUp(d, vlan) ? this.l3Ifs(d.id).find((i) => i.name === `Vlan${vlan}`) : undefined;
 
     if (inPort && sviMac && frame.dst === sviMac) {
       if (!svi) {
@@ -461,8 +500,8 @@ export class Net {
       this.deliver(d, pkt, frame);
       return;
     }
-    if (this.isHost(d)) {
-      this.log({ dev: d.id, kind: "drop", frame, note: `the packet is for ${pkt.dst}, not me, and hosts do not route, so it is dropped` });
+    if (this.isHost(d) || d.kind === "switch") {
+      this.log({ dev: d.id, kind: "drop", frame, note: `the packet is for ${pkt.dst}, not me, and ${d.kind === "switch" ? "a Layer 2 switch" : "a host"} does not route, so it is dropped` });
       return;
     }
     if (pkt.ttl <= 1) {
@@ -488,7 +527,7 @@ export class Net {
       const ace = acl[i];
       if ((ace.proto === "ip" || ace.proto === "icmp") && aclAddrMatch(ace.src, pkt.src) && aclAddrMatch(ace.dst, pkt.dst)) {
         if (ace.action === "permit") return true;
-        this.log({ dev: d.id, kind: "drop", frame, note: `ACL ${name} ${where}: line ${(i + 1) * 10} "${ace.action} ${ace.proto} ${ace.src} ${ace.dst}" matched. Denied` });
+        this.log({ dev: d.id, kind: "drop", frame, note: `ACL ${name} ${where}: line ${ace.seq ?? (i + 1) * 10} "${ace.action} ${ace.proto} ${ace.src} ${ace.dst}" matched. Denied` });
         return false;
       }
     }
@@ -519,8 +558,14 @@ export class Net {
 
   /** Locally generated packet: route it, then ARP + send. */
   private originate(d: Device, pkt: Pkt) {
-    const r = this.resolve(d.id, pkt.dst);
     const frame: Frame = { src: "", dst: "", ip: pkt };
+    // Traffic to one of my own addresses never touches the wire.
+    if (this.l3Ifs(d.id).some((i) => i.up && i.cidr.ip === pkt.dst)) {
+      this.log({ dev: d.id, kind: "proc", frame, note: `${pkt.dst} is my own address, so the packet is handled locally` });
+      this.deliver(d, pkt, frame);
+      return;
+    }
+    const r = this.resolve(d.id, pkt.dst);
     if ("error" in r) {
       this.log({ dev: d.id, kind: "drop", frame, note: `cannot send to ${pkt.dst}: ${r.error}` });
       return;

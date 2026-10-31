@@ -52,3 +52,29 @@ export function validAclAddr(spec: string): boolean {
   const s = spec.trim();
   return s === "any" || (s.startsWith("host ") && isIp(s.slice(5).trim())) || parseCidr(s) !== null;
 }
+
+/** "255.255.255.0" → 24, or null if the mask is not contiguous. */
+export function maskToLen(mask: string): number | null {
+  if (!isIp(mask)) return null;
+  const m = ipToInt(mask);
+  for (let len = 0; len <= 32; len++) if (maskOf(len) === m) return len;
+  return null;
+}
+
+/** Wildcard "0.0.0.255" → 24, or null if it is not a contiguous inverse mask. */
+export function wildcardToLen(w: string): number | null {
+  if (!isIp(w)) return null;
+  return maskToLen(intToIp(~ipToInt(w) >>> 0));
+}
+
+export function lenToWildcard(len: number): string {
+  return intToIp(~maskOf(len) >>> 0);
+}
+
+/** ACL spec ("any", "host x", "10.0.0.0/8") in IOS syntax. */
+export function aclSpecToIos(spec: string): string {
+  const c = parseCidr(spec);
+  if (!c) return spec;
+  if (c.len === 32) return `host ${c.ip}`;
+  return `${intToIp(c.net)} ${lenToWildcard(c.len)}`;
+}

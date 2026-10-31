@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { WireRoom } from "@/components/wire/WireRoom";
+import { Bench } from "@/components/bench/Bench";
 import { scenarioById, scenarios } from "@/data/wire";
 
 export function generateStaticParams() {
@@ -14,6 +14,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function WireScenarioPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  if (!scenarioById[id]) notFound();
-  return <WireRoom scenarioId={id} />;
+  const scenario = scenarioById[id];
+  if (!scenario) notFound();
+  return <Bench key={id} scenario={scenario} />;
 }
