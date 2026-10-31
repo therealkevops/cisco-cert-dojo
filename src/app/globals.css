@@ -1137,3 +1137,7 @@ h3.display { font-size: 28px; }
   .bench-status { display: none; }
   .tbtn { min-width: 34px; }
 }
+
+.exhibit { margin: -6px 0 18px; }
+.exhibit figcaption { display: block; margin-bottom: 4px; }
+.exhibit .cli { margin: 0; font-size: 12px; max-height: 320px; overflow: auto; }

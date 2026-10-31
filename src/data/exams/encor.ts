@@ -1,4 +1,8 @@
 import type { Exam } from "../types";
+import { encorBankA } from "./encor-bank-a";
+import { encorBankB } from "./encor-bank-b";
+import { encorBankC } from "./encor-bank-c";
+import { encorBankD } from "./encor-bank-d";
 
 // Blueprint: Implementing Cisco Enterprise Network Core Technologies v1.2 (350-401).
 // Domain numbering and weights follow Cisco's published exam topics PDF.
@@ -723,6 +727,10 @@ for dev in r.json()["response"]:
   ],
 
   questions: [
+    ...encorBankA,
+    ...encorBankB,
+    ...encorBankC,
+    ...encorBankD,
     // 1.x Architecture
     {
       id: "e-001",

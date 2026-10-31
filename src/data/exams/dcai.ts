@@ -1,4 +1,6 @@
 import type { Exam } from "../types";
+import { dcaiBankA } from "./dcai-bank-a";
+import { dcaiBankB } from "./dcai-bank-b";
 
 // Blueprint: Implementing Cisco Data Center AI Infrastructure v1.0 (300-640 DCAI).
 // Released February 2026. Counts toward CCNP Data Center (with 350-601 DCCOR) and the
@@ -338,6 +340,8 @@ show policy-map system type network-qos`,
   ],
 
   questions: [
+    ...dcaiBankA,
+    ...dcaiBankB,
     // 1.x
     {
       id: "d-001",

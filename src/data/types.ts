@@ -27,6 +27,8 @@ type QuestionBase = {
   objective: string; // Objective.id
   prompt: string;
   explain: string;
+  /** Optional CLI output or config shown above the choices. */
+  exhibit?: string;
 };
 
 export type SingleQuestion = QuestionBase & {

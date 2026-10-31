@@ -43,8 +43,9 @@ export function Mock({ examId }: { examId: string }) {
   const p = useProgress();
   const index = useMemo(() => objectiveIndex(exam), [exam]);
   const sizes = useMemo(() => {
+    // Quick, half-length and full-length sittings, capped by the bank size.
     const n = exam.questions.length;
-    return [...new Set([Math.min(20, n), Math.min(Math.round(n / 2), n), n])];
+    return [...new Set([Math.min(20, n), Math.min(Math.round(exam.approxItems / 2), n), Math.min(exam.approxItems, n)])];
   }, [exam]);
   const [size, setSize] = useState(sizes[1] ?? sizes[0]);
   const [strict, setStrict] = useState(false);
@@ -280,7 +281,7 @@ export function Mock({ examId }: { examId: string }) {
           {sizes.map((n) => (
             <button key={n} role="radio" aria-checked={size === n} className={size === n ? "on" : ""} onClick={() => setSize(n)}>
               {n}
-              {n === exam.questions.length ? " (full bank)" : ""}
+              {n === Math.min(exam.approxItems, exam.questions.length) ? " (full length)" : ""}
             </button>
           ))}
         </div>

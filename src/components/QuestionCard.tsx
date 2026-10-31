@@ -54,6 +54,12 @@ export function QuestionCard({ q, r, onChange, revealed, seed, onSubmit }: Props
       <p className="q-prompt">
         <Rich text={q.prompt} />
       </p>
+      {q.exhibit && (
+        <figure className="exhibit">
+          <figcaption className="silk">Exhibit</figcaption>
+          <pre className="cli">{q.exhibit}</pre>
+        </figure>
+      )}
 
       {(q.kind === "single" || q.kind === "multi") && (
         <>
