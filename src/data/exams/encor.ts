@@ -3,6 +3,9 @@ import { encorBankA } from "./encor-bank-a";
 import { encorBankB } from "./encor-bank-b";
 import { encorBankC } from "./encor-bank-c";
 import { encorBankD } from "./encor-bank-d";
+import { encorBankE } from "./encor-bank-e";
+import { encorBankF } from "./encor-bank-f";
+import { encorBankG } from "./encor-bank-g";
 
 // Blueprint: Implementing Cisco Enterprise Network Core Technologies v1.2 (350-401).
 // Domain numbering and weights follow Cisco's published exam topics PDF.
@@ -731,6 +734,9 @@ for dev in r.json()["response"]:
     ...encorBankB,
     ...encorBankC,
     ...encorBankD,
+    ...encorBankE,
+    ...encorBankF,
+    ...encorBankG,
     // 1.x Architecture
     {
       id: "e-001",
