@@ -169,7 +169,7 @@ export const PRACTICAL_WEIGHT = 2;
 export function practicalDone(p: Progress, x: Practical): boolean {
   if (x.kind === "wire") return !!p.wire[x.id];
   if (x.kind === "fabric") return !!p.fabric[x.id];
-  if (x.kind === "sizing") return !!p.sizing[x.id];
+  if (x.kind === "sizing" || x.kind === "desk") return !!p.sizing[x.id];
   return !!p.labs[x.id];
 }
 

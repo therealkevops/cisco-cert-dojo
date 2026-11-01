@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { examList } from "@/data/catalog";
 import { labs } from "@/data/labs";
 import { fabricScenarios } from "@/data/fabric";
+import { deskExercises } from "@/data/desk";
 import { sizingExercises } from "@/data/sizing";
 import { scenarios } from "@/data/wire";
 
@@ -29,6 +30,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       { name: "fabric", help: "Fabric Lab: RoCEv2 PFC/ECN simulator (DCAI)", run: go("/fabric") },
       { name: "sizing", help: "Sizing Desk: GPU cluster sizing worksheets (DCAI)", run: go("/sizing") },
       { name: "builder", help: "AI cluster builder: live sizing calculator", run: go("/sizing/builder") },
+      { name: "desk", help: "Design & Automation Desk: ENCOR worksheets (JSON, YANG, APIs, Python, design maths)", run: go("/desk") },
       { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
       { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
     ];
@@ -37,6 +39,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       list.push({ name: `kata ${e.id}`, help: `${e.short}: spaced-repetition drill`, run: go(`/exam/${e.id}/kata`) });
       list.push({ name: `mock ${e.id}`, help: `${e.short}: timed mock exam`, run: go(`/exam/${e.id}/mock`) });
     }
+    for (const e of deskExercises) list.push({ name: `desk ${e.id.replace(/^desk-/, "")}`, help: e.title, run: go(`/desk/${e.id}`) });
     for (const e of sizingExercises) list.push({ name: `sizing ${e.id.replace(/^size-/, "")}`, help: e.title, run: go(`/sizing/${e.id}`) });
     for (const s of fabricScenarios) list.push({ name: `fabric ${s.id}`, help: s.title, run: go(`/fabric/${s.id}`) });
     for (const s of scenarios) list.push({ name: `wire ${s.id}`, help: s.title, run: go(`/wire/${s.id}`) });

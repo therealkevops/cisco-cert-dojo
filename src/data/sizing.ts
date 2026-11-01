@@ -17,19 +17,35 @@ import {
 // Sizing Desk: worksheet exercises for DCAI 2.1–2.4. Every answer is computed by src/lib/sizing.ts, so the
 // worked solution and the grading can't drift apart.
 
-export type SizingStep = {
+type StepBase = {
   prompt: string;
+  /** Optional code, JSON or CLI shown above the answer box. */
+  exhibit?: string;
+  working: string;
+};
+export type NumberStep = StepBase & {
+  kind?: "number";
   unit: string;
   answer: number;
   /** relative tolerance (0 = exact integer) */
   tol: number;
-  working: string;
 };
+/** Free text, compared case-insensitively with whitespace collapsed. */
+export type TextStep = StepBase & { kind: "text"; accept: string[]; canonical: string; unit?: string };
+export type JsonCheck = { path: string; equals?: string | number | boolean | null; type?: "string" | "number" | "boolean" | "array" | "object"; length?: number };
+/** The learner writes JSON; it must parse and pass every check. */
+export type JsonStep = StepBase & { kind: "json"; checks: JsonCheck[]; example: string };
+export type ChoiceStep = StepBase & { kind: "choice"; choices: string[]; answer: number };
+export type SizingStep = NumberStep | TextStep | JsonStep | ChoiceStep;
 
 export type SizingExercise = {
   id: string;
-  exam: "dcai";
+  exam: "dcai" | "encor";
+  /** Sizing Desk (DCAI) or Design & Automation Desk (ENCOR). */
+  area?: "sizing" | "desk";
   objective: string;
+  /** Further objectives this worksheet practises. */
+  also?: string[];
   title: string;
   brief: string;
   /** The facts on the design request, shown as a spec sheet. */
@@ -200,9 +216,62 @@ export function parseAnswer(s: string): number | null {
   return m ? Number(m[0]) : null;
 }
 
+const norm = (s: string) => s.trim().replace(/\s+/g, " ").replace(/^["'`]|["'`]$/g, "").toLowerCase();
+
+/** Value at a dotted path such as `vlans[1].name` or `ietf-interfaces:interface.name`. */
+export function jsonAt(root: unknown, path: string): unknown {
+  let cur: unknown = root;
+  for (const part of path.split(".")) {
+    const m = part.match(/^([^[\]]*)((?:\[\d+\])*)$/);
+    if (!m) return undefined;
+    if (m[1]) cur = cur && typeof cur === "object" ? (cur as Record<string, unknown>)[m[1]] : undefined;
+    for (const ix of m[2].match(/\d+/g) ?? []) cur = Array.isArray(cur) ? cur[+ix] : undefined;
+  }
+  return cur;
+}
+
+const typeOf = (v: unknown) => (Array.isArray(v) ? "array" : v === null ? "null" : typeof v);
+
+/** Checks a JSON answer; returns the problems found (empty = correct). */
+export function checkJson(step: JsonStep, input: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(input);
+  } catch (e) {
+    return [`Not valid JSON: ${(e as Error).message}`];
+  }
+  const out: string[] = [];
+  for (const c of step.checks) {
+    const v = jsonAt(data, c.path);
+    if (v === undefined) {
+      out.push(`${c.path} is missing`);
+      continue;
+    }
+    const wantType = c.type ?? (c.equals !== undefined && c.equals !== null ? typeOf(c.equals) : undefined);
+    if (wantType && typeOf(v) !== wantType) {
+      out.push(`${c.path} should be ${wantType === "array" ? "an array" : wantType === "object" ? "an object" : `a ${wantType}`}, not ${typeOf(v)} ${JSON.stringify(v)}`.trim());
+      continue;
+    }
+    if (c.equals !== undefined && v !== c.equals) out.push(`${c.path} should be ${JSON.stringify(c.equals)}, not ${JSON.stringify(v)}`);
+    if (c.length !== undefined && (!Array.isArray(v) || v.length !== c.length)) out.push(`${c.path} should have ${c.length} items`);
+  }
+  return out;
+}
+
 export function checkStep(step: SizingStep, input: string): boolean {
+  if (step.kind === "text") return step.accept.some((a) => norm(a) === norm(input));
+  if (step.kind === "json") return checkJson(step, input).length === 0;
+  if (step.kind === "choice") return Number(input) === step.answer;
   const v = parseAnswer(input);
   if (v === null) return false;
   if (step.tol === 0) return Math.abs(v - step.answer) < 1e-9;
   return Math.abs(v - step.answer) <= Math.abs(step.answer) * step.tol;
+}
+
+/** The answer as it should be shown when revealed. */
+export function shownAnswer(step: SizingStep): string {
+  if (step.kind === "text") return step.canonical;
+  if (step.kind === "json") return step.example;
+  if (step.kind === "choice") return step.choices[step.answer];
+  return `${step.answer.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${step.unit}`.trim();
 }

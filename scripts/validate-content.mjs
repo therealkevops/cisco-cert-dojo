@@ -10,7 +10,8 @@ import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
 import { practicals } from "../src/data/practice.ts";
 import { fabricScenarios } from "../src/data/fabric.ts";
-import { sizingExercises, checkStep } from "../src/data/sizing.ts";
+import { checkStep, shownAnswer } from "../src/data/sizing.ts";
+import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
 import { Net } from "../src/lib/net/engine.ts";
 import { newSession, runCli } from "../src/lib/ios/cli.ts";
@@ -255,17 +256,33 @@ for (const sc of fabricScenarios) {
 console.log(`fabric ${fabricScenarios.length} scenarios (broken as shipped, fixed by reference)`);
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
-for (const e of sizingExercises) {
-  if (!e.steps.length) fail(`sizing ${e.id}: no steps`);
+const ids = new Set();
+for (const e of worksheets) {
+  if (ids.has(e.id)) fail(`worksheet ${e.id}: duplicate id`);
+  ids.add(e.id);
+  if (!e.steps.length) fail(`worksheet ${e.id}: no steps`);
   e.steps.forEach((st, i) => {
-    if (!Number.isFinite(st.answer)) fail(`sizing ${e.id} step ${i + 1}: answer is not a number`);
-    const shown = st.tol === 0 ? String(st.answer) : st.answer.toFixed(2);
-    if (!checkStep(st, shown)) fail(`sizing ${e.id} step ${i + 1}: grader rejects its own answer ${shown}`);
-    if (st.tol === 0 && !Number.isInteger(st.answer)) fail(`sizing ${e.id} step ${i + 1}: exact step with a fractional answer`);
-    if (!st.working) fail(`sizing ${e.id} step ${i + 1}: no working`);
+    const where = `worksheet ${e.id} step ${i + 1}`;
+    if (!st.working) fail(`${where}: no working`);
+    if (st.kind === "text") {
+      if (!checkStep(st, st.canonical) && !st.accept.length) fail(`${where}: no accepted answers`);
+      if (!st.accept.some((a) => checkStep(st, a))) fail(`${where}: accepts nothing`);
+      if (checkStep(st, "")) fail(`${where}: accepts an empty answer`);
+    } else if (st.kind === "json") {
+      if (!checkStep(st, st.example)) fail(`${where}: example fails its own checks`);
+      if (checkStep(st, "{}")) fail(`${where}: {} passes`);
+    } else if (st.kind === "choice") {
+      if (!(st.answer >= 0 && st.answer < st.choices.length)) fail(`${where}: answer index out of range`);
+    } else {
+      if (!Number.isFinite(st.answer)) fail(`${where}: answer is not a number`);
+      const shown = shownAnswer(st).split(" ")[0];
+      if (!checkStep(st, shown)) fail(`${where}: grader rejects its own answer ${shown}`);
+      if (st.tol === 0 && !Number.isInteger(st.answer)) fail(`${where}: exact step with a fractional answer`);
+    }
+    if (!shownAnswer(st)) fail(`${where}: nothing to reveal`);
   });
 }
-console.log(`sizing ${sizingExercises.length} worksheets`);
+console.log(`sheets ${worksheets.length} worksheets (${worksheets.filter((w) => w.area === "desk").length} ENCOR desk)`);
 
 // Every hands-on item must land on a real blueprint objective, or it would silently never count toward mastery.
 for (const x of practicals) {

@@ -1301,3 +1301,14 @@ h3.display { font-size: 28px; }
 @media (max-width: 640px) {
   .size-a input { width: 110px; }
 }
+.size-exhibit { font-family: var(--mono); font-size: 12.5px; background: var(--term-bg); color: var(--term-ink); padding: 10px 12px; border-radius: 4px; margin: 0 0 10px; overflow-x: auto; white-space: pre; }
+.size-a.text input { width: min(460px, 100%); }
+.size-a.json { align-items: flex-start; }
+.size-a.json textarea { width: 100%; font-family: var(--mono); font-size: 13px; padding: 8px 10px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; resize: vertical; tab-size: 2; }
+.size-a.json textarea:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.size-choices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.size-choice { font-family: var(--mono); font-size: 12.5px; text-align: left; padding: 7px 10px; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; }
+.size-choice:hover:not(:disabled) { border-color: var(--amber); }
+.size-choice.ok { border-color: var(--green); color: var(--green); }
+.size-choice.bad { border-color: var(--red); color: var(--red); }
+.size-problems { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--red); }
