@@ -32,11 +32,12 @@ export type Progress = {
   read: Record<string, number>; // `${exam}:${objective}` -> epoch ms
   wire: Record<string, { at: number }>; // solved Wire Room challenges
   fabric: Record<string, { at: number }>; // solved Fabric Lab challenges
+  sizing: Record<string, { at: number }>; // completed Sizing Desk worksheets
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -128,6 +129,12 @@ export function recordFabric(scenarioId: string) {
   save({ ...p, fabric: { ...p.fabric, [scenarioId]: { at: Date.now() } }, days: touchDay(p) });
 }
 
+export function recordSizing(exerciseId: string) {
+  const p = load();
+  if (p.sizing[exerciseId]) return;
+  save({ ...p, sizing: { ...p.sizing, [exerciseId]: { at: Date.now() } }, days: touchDay(p) });
+}
+
 export function recordMock(result: MockResult) {
   const p = load();
   save({ ...p, mocks: [...p.mocks, result].slice(-50), days: touchDay(p) });
@@ -160,7 +167,10 @@ export function resetProgress() {
 export const PRACTICAL_WEIGHT = 2;
 
 export function practicalDone(p: Progress, x: Practical): boolean {
-  return x.kind === "wire" ? !!p.wire[x.id] : x.kind === "fabric" ? !!p.fabric[x.id] : !!p.labs[x.id];
+  if (x.kind === "wire") return !!p.wire[x.id];
+  if (x.kind === "fabric") return !!p.fabric[x.id];
+  if (x.kind === "sizing") return !!p.sizing[x.id];
+  return !!p.labs[x.id];
 }
 
 /**

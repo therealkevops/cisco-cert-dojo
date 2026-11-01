@@ -10,6 +10,7 @@ import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
 import { practicals } from "../src/data/practice.ts";
 import { fabricScenarios } from "../src/data/fabric.ts";
+import { sizingExercises, checkStep } from "../src/data/sizing.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
 import { Net } from "../src/lib/net/engine.ts";
 import { newSession, runCli } from "../src/lib/ios/cli.ts";
@@ -252,6 +253,19 @@ for (const sc of fabricScenarios) {
   }
 }
 console.log(`fabric ${fabricScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+
+// Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
+for (const e of sizingExercises) {
+  if (!e.steps.length) fail(`sizing ${e.id}: no steps`);
+  e.steps.forEach((st, i) => {
+    if (!Number.isFinite(st.answer)) fail(`sizing ${e.id} step ${i + 1}: answer is not a number`);
+    const shown = st.tol === 0 ? String(st.answer) : st.answer.toFixed(2);
+    if (!checkStep(st, shown)) fail(`sizing ${e.id} step ${i + 1}: grader rejects its own answer ${shown}`);
+    if (st.tol === 0 && !Number.isInteger(st.answer)) fail(`sizing ${e.id} step ${i + 1}: exact step with a fractional answer`);
+    if (!st.working) fail(`sizing ${e.id} step ${i + 1}: no working`);
+  });
+}
+console.log(`sizing ${sizingExercises.length} worksheets`);
 
 // Every hands-on item must land on a real blueprint objective, or it would silently never count toward mastery.
 for (const x of practicals) {
