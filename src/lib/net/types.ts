@@ -27,6 +27,31 @@ export type Port = {
   nat?: "inside" | "outside";
   /** `ip helper-address` targets (DHCP relay). */
   helpers?: string[];
+  /** Router subinterfaces ("Gi0/0.10") only: `encapsulation dot1Q <vlan> [native]`. */
+  encap?: { vlan: number; native?: boolean };
+  /** `bandwidth <kbps>` (EIGRP metric). */
+  bandwidth?: number;
+  /** `delay <tens of microseconds>` (EIGRP metric). */
+  delay?: number;
+  /** HSRP / VRRP groups on this routed interface. */
+  fhrp?: FhrpGroup[];
+  /** `standby version 2` (applies to every HSRP group on the interface). */
+  hsrpVersion?: 2;
+};
+
+export type FhrpGroup = {
+  proto: "hsrp" | "vrrp";
+  group: number;
+  /** Virtual IP. HSRP routers may learn it from the active router instead. */
+  ip?: string;
+  /** Default 100. */
+  priority?: number;
+  /** HSRP default off, VRRP default on. */
+  preempt?: boolean;
+  /** HSRP only: 1 (default) or 2. */
+  version?: 1 | 2;
+  /** Lower the priority while a tracked interface (or `track` object) is down. */
+  track?: { iface?: string; object?: number; decrement: number }[];
 };
 
 /** `ip nat inside source ...` rules, in configuration order. */
@@ -66,6 +91,21 @@ export type Bgp = {
   /** `network A mask M`: originated only when this exact prefix is in the routing table. */
   networks: string[];
   redistribute?: ("connected" | "static" | "ospf")[];
+};
+
+/** `router eigrp <asn>` (classic) or named mode (`router eigrp NAME` + address-family). One process per device. */
+export type Eigrp = {
+  asn: number;
+  /** Named mode virtual-instance name; undefined = classic mode. */
+  name?: string;
+  routerId?: string;
+  /** `network A [wildcard]`; no wildcard = the classful network. */
+  networks: { ip: string; wildcard?: string }[];
+  passiveDefault?: boolean;
+  passive?: string[];
+  noPassive?: string[];
+  variance?: number;
+  redistribute?: ("static" | "connected")[];
 };
 
 export type RouteMapEntry = {
@@ -118,6 +158,10 @@ export type Svi = {
   ospf?: IfOspf;
   nat?: "inside" | "outside";
   helpers?: string[];
+  bandwidth?: number;
+  delay?: number;
+  fhrp?: FhrpGroup[];
+  hsrpVersion?: 2;
 };
 
 export type StaticRoute = { prefix: string; via: string };
@@ -160,6 +204,9 @@ export type Device = {
   /** Hosts only: the NIC is set to obtain its address by DHCP. */
   dhcpClient?: boolean;
   bgp?: Bgp;
+  eigrp?: Eigrp;
+  /** `track N interface X line-protocol` objects. */
+  tracks?: Record<string, { iface: string }>;
   routeMaps?: Record<string, RouteMapEntry[]>;
   prefixLists?: Record<string, PrefixListEntry[]>;
 };
@@ -190,8 +237,12 @@ export type Goal =
   | { type: "bgpUp"; device: string; neighbor: string; label: string }
   /** The device's best BGP path for `prefix` uses next hop `nextHop`. */
   | { type: "bgpBest"; device: string; prefix: string; nextHop: string; label: string }
+  /** The device is the active (HSRP) or master (VRRP) router for this group. */
+  | { type: "fhrpActive"; device: string; group: number; label: string }
+  /** The two routers are EIGRP neighbours. */
+  | { type: "eigrpNbr"; device: string; neighbor: string; label: string }
   /** A route for exactly this prefix is (or is not) in the device's table, optionally with this code. */
-  | { type: "route"; device: string; prefix: string; code?: string; expect: boolean; label: string };
+  | { type: "route"; device: string; prefix: string; code?: string; via?: string; expect: boolean; label: string };
 
 export type Scenario = {
   id: string;

@@ -1,4 +1,4 @@
-import { Net, type ProbeResult } from "../net/engine";
+import { Net, parentOf, type ProbeResult } from "../net/engine";
 import { intToIp, ipToInt, isIp, maskOf, maskToLen, parseCidr, wildcardToLen } from "../net/ip";
 import { renameDevice } from "../net/ops";
 import { apipa, dhcpRelease, dhcpRequest } from "../net/dhcp";
@@ -10,6 +10,11 @@ import {
   showBgpNeighbors,
   showBgpSummary,
   showBgpTable,
+  showEigrpInterfaces,
+  showEigrpNeighbors,
+  showEigrpTopology,
+  showFhrpBrief,
+  showStandby,
   showDhcpBinding,
   showDhcpConflict,
   showDhcpPool,
@@ -32,7 +37,7 @@ import {
   showVersion,
   showVlanBrief,
 } from "../net/show";
-import type { Ace, Device, Topology } from "../net/types";
+import type { Ace, Device, FhrpGroup, Topology } from "../net/types";
 
 // An IOS-style CLI over the Wire Room topology. Commands are a tree of
 // keywords and typed arguments; the walker gives IOS behaviour for free:
@@ -49,7 +54,9 @@ export type Mode =
   | { m: "router" }
   | { m: "dhcp"; pool: string }
   | { m: "bgp"; af?: boolean }
-  | { m: "rmap"; name: string; seq: number };
+  | { m: "rmap"; name: string; seq: number }
+  /** EIGRP: classic (`router eigrp 100`) or named mode with its nested address-family sections. */
+  | { m: "eigrp"; named?: boolean; sub?: "af" | "afif" | "topo"; afIf?: string };
 
 export type Session = { dev: string; priv: boolean; mode: Mode };
 
@@ -83,6 +90,10 @@ export function prompt(s: Session, isHost: boolean): string {
     dhcp: "(dhcp-config)",
     bgp: s.mode.m === "bgp" && s.mode.af ? "(config-router-af)" : "(config-router)",
     rmap: "(config-route-map)",
+    eigrp:
+      s.mode.m === "eigrp" && s.mode.sub
+        ? { af: "(config-router-af)", afif: "(config-router-af-interface)", topo: "(config-router-af-topology)" }[s.mode.sub]
+        : "(config-router)",
   };
   return `${s.dev}${sfx[s.mode.m]}${s.priv ? "#" : ">"}`;
 }
@@ -185,12 +196,19 @@ function readArg(n: Node, tokens: string[], i: number, c: Ctx): { consumed: numb
     case "iface": {
       const ok = (name: string | null) => {
         if (!name) return false;
+        const sub = /^(.+)\.(\d+)$/.exec(name);
+        if (sub) return c.dev.kind === "router" && +sub[2] >= 1 && c.dev.ports.some((p) => !parentOf(p.name) && p.name.toLowerCase() === sub[1].toLowerCase());
         if (name.startsWith("Vlan")) return /^Vlan\d+$/.test(name) && +name.slice(4) >= 1 && +name.slice(4) <= 4094 && isSwitch(c);
         if (name.startsWith("Lo")) return /^Lo\d+$/.test(name) && +name.slice(2) <= 2147483647 && isL3(c);
         if (name.startsWith("Po")) return /^Po\d+$/.test(name) && +name.slice(2) >= 1 && +name.slice(2) <= 48 && isSwitch(c);
         return c.dev.ports.some((p) => p.name.toLowerCase() === name.toLowerCase());
       };
-      const fix = (name: string) => (name.startsWith("Vlan") || name.startsWith("Lo") || name.startsWith("Po") ? name : c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name);
+      const fix = (name: string) => {
+        if (name.startsWith("Vlan") || name.startsWith("Lo") || name.startsWith("Po")) return name;
+        const sub = /^(.+)\.(\d+)$/.exec(name);
+        if (sub) return `${c.dev.ports.find((p) => p.name.toLowerCase() === sub[1].toLowerCase())!.name}.${+sub[2]}`;
+        return c.dev.ports.find((p) => p.name.toLowerCase() === name.toLowerCase())!.name;
+      };
       const one = canonIf(t);
       if (ok(one)) return { consumed: 1, value: fix(one!) };
       if (i + 1 < tokens.length) {
@@ -244,7 +262,7 @@ function showTree(): Node[] {
         kw("route", "IP routing table", {
           when: isL3,
           run: (c) => say(c, showIpRoute(c.net, c.s.dev)),
-          sub: (["bgp", "ospf", "static", "connected"] as const).map((k) => kw(k, `${k} routes only`, { run: (c) => say(c, showIpRoute(c.net, c.s.dev, k)) })),
+          sub: (["bgp", "eigrp", "ospf", "static", "connected"] as const).map((k) => kw(k, `${k} routes only`, { run: (c) => say(c, showIpRoute(c.net, c.s.dev, k)) })),
         }),
         kw("bgp", "BGP information", {
           when: isL3,
@@ -258,6 +276,14 @@ function showTree(): Node[] {
           ],
         }),
         kw("arp", "IP ARP table", { run: (c) => say(c, showArp(c.net, c.s.dev)) }),
+        kw("eigrp", "IP-EIGRP show commands", {
+          when: isL3,
+          sub: [
+            kw("neighbors", "IP-EIGRP neighbors", { run: (c) => say(c, showEigrpNeighbors(c.net, c.s.dev)) }),
+            kw("topology", "IP-EIGRP topology", { run: (c) => say(c, showEigrpTopology(c.net, c.s.dev)), sub: [kw("all-links", "Show all links in topology table", { run: (c) => say(c, showEigrpTopology(c.net, c.s.dev, true)) })] }),
+            kw("interfaces", "IP-EIGRP interfaces", { run: (c) => say(c, showEigrpInterfaces(c.net, c.s.dev)) }),
+          ],
+        }),
         kw("ospf", "OSPF information", {
           when: isL3,
           run: (c) => say(c, showOspf(c.net, c.s.dev)),
@@ -284,6 +310,8 @@ function showTree(): Node[] {
         kw("protocols", "IP routing protocol process parameters and statistics", { when: isL3, run: (c) => say(c, showIpProtocols(c.net, c.s.dev)) }),
       ],
     }),
+    kw("standby", "Hot standby protocol information", { when: isL3, run: (c) => say(c, showStandby(c.net, c.s.dev)), sub: [kw("brief", "Brief output", { run: (c) => say(c, showFhrpBrief(c.net, c.s.dev, "hsrp")) })] }),
+    kw("vrrp", "VRRP information", { when: isL3, run: (c) => say(c, showFhrpBrief(c.net, c.s.dev, "vrrp")), sub: [kw("brief", "Brief output", { run: (c) => say(c, showFhrpBrief(c.net, c.s.dev, "vrrp")) })] }),
     kw("interfaces", "Interface status and configuration", {
       sub: [
         kw("trunk", "Show interface trunk information", { when: isSwitch, run: (c) => say(c, showIntTrunk(c.net, c.s.dev)) }),
@@ -421,6 +449,8 @@ function setIp(c: Ctx, ip: string, mask: string) {
   if (len < 31 && (host === net || host === bcast)) return say(c, `% ${ip} is the ${host === net ? "network" : "broadcast"} address of ${intToIp(net)}/${len}`);
   eachIf(c, (p, isSvi, d) => {
     if (!isSvi && d.kind === "switch") return "% Layer 2 switch ports can't have an IP address. Use 'interface vlan N' (management) or an L3 switch.";
+    if (!isSvi && parentOf((p as Device["ports"][number]).name) && !(p as Device["ports"][number]).encap)
+      return "% Configuring IP routing on a LAN subinterface is only allowed if that subinterface is already configured as part of an IEEE 802.10, IEEE 802.1Q, or ISL vLAN.";
     if (!isSvi && d.kind === "l3switch" && (p as Device["ports"][number]).mode !== "routed") return "% This is a switchport. Use 'no switchport' first, or configure an SVI.";
     p.ip = `${ip}/${len}`;
   });
@@ -528,6 +558,7 @@ function enterIfs(c: Ctx, ifs: string[]) {
       if (!c.dev.svis?.some((s) => s.vlan === vlan)) edit(c, (d) => (d.svis = [...(d.svis ?? []), { vlan, ip: "" }]));
     }
     if (name.startsWith("Po") && !c.dev.portChannels?.some((p) => p.name === name)) edit(c, (d) => (d.portChannels = [...(d.portChannels ?? []), { name, mode: "access", vlan: 1 }]));
+    if (parentOf(name) && !c.dev.ports.some((p) => p.name === name)) edit(c, (d) => d.ports.push({ name }));
     if (name.startsWith("Lo") && !c.dev.ports.some((p) => p.name === name)) {
       edit(c, (d) => d.ports.push(d.kind === "l3switch" ? { name, mode: "routed" } : { name }));
       say(c, `%LINEPROTO-5-UPDOWN: Line protocol on Interface ${longIf(name)}, changed state to up`);
@@ -698,7 +729,20 @@ function configTree(): Node[] {
             }),
           ],
         }),
-        kw("eigrp", "Enhanced Interior Gateway Routing Protocol (EIGRP)", { run: notSimulated("EIGRP"), sub: [arg("line", "x", "WORD", "AS number", { run: notSimulated("EIGRP") })] }),
+        kw("eigrp", "Enhanced Interior Gateway Routing Protocol (EIGRP)", {
+          sub: [
+            arg("word", "as", "<1-65535> | WORD", "Autonomous System number, or a name for named mode", {
+              run: (c) => {
+                const classic = /^\d+$/.test(c.a.as);
+                if (classic && (+c.a.as < 1 || +c.a.as > 65535)) return say(c, "% Invalid AS number");
+                const e = c.dev.eigrp;
+                if (e && (classic ? e.name || e.asn !== +c.a.as : e.name !== c.a.as)) return say(c, `% Wire Room simulates one EIGRP process per device (eigrp ${e.name ?? e.asn} already runs here).`);
+                if (!e) edit(c, (d) => (d.eigrp = classic ? { asn: +c.a.as, networks: [] } : { asn: 0, name: c.a.as, networks: [] }));
+                c.s.mode = classic ? { m: "eigrp" } : { m: "eigrp", named: true };
+              },
+            }),
+          ],
+        }),
         kw("bgp", "Border Gateway Protocol (BGP)", {
           sub: [
             arg("num", "asn", "<1-4294967295>", "Autonomous system number", {
@@ -712,6 +756,24 @@ function configTree(): Node[] {
           ],
         }),
         kw("rip", "Routing Information Protocol (RIP)", { run: notSimulated("RIP") }),
+      ],
+    }),
+    kw("track", "Object tracking configuration commands", {
+      when: isL3,
+      sub: [
+        arg("num", "obj", "<1-1000>", "Tracked object", {
+          range: [1, 1000],
+          sub: [
+            kw("interface", "Select an interface to track", {
+              sub: [
+                arg("iface", "tif", "<interface>", "Interface", {
+                  sub: [kw("line-protocol", "Track interface line-protocol", { run: (c) => edit(c, (d) => (d.tracks = { ...(d.tracks ?? {}), [c.a.obj]: { iface: c.a.tif } })) })],
+                }),
+              ],
+            }),
+            kw("ip", "IP protocol", { sub: [kw("sla", "IP Service Level Agreement", { run: notSimulated("IP SLA tracking"), sub: [arg("line", "x", "LINE", "operation", { run: notSimulated("IP SLA tracking") })] })] }),
+          ],
+        }),
       ],
     }),
     kw("route-map", "Create route-map or enter route-map command mode", {
@@ -773,8 +835,11 @@ function configTree(): Node[] {
         kw("router", "Disable a routing process", {
           sub: [
             kw("bgp", "Border Gateway Protocol (BGP)", { sub: [arg("num", "asn", "<1-4294967295>", "AS number", { run: (c) => edit(c, (d) => { if (d.bgp?.asn === +c.a.asn) delete d.bgp; else say(c, "% BGP not running with that AS"); }) })] }),
-            kw("ospf", "Open Shortest Path First (OSPF)", { sub: [arg("num", "pid", "<1-65535>", "Process ID", { range: [1, 65535], run: (c) => edit(c, (d) => { if (d.ospf?.pid === +c.a.pid) delete d.ospf; else say(c, "% OSPF process not found"); }) })] })],
+            kw("ospf", "Open Shortest Path First (OSPF)", { sub: [arg("num", "pid", "<1-65535>", "Process ID", { range: [1, 65535], run: (c) => edit(c, (d) => { if (d.ospf?.pid === +c.a.pid) delete d.ospf; else say(c, "% OSPF process not found"); }) })] }),
+            kw("eigrp", "Enhanced Interior Gateway Routing Protocol (EIGRP)", { sub: [arg("word", "as", "<1-65535> | WORD", "AS number or name", { run: (c) => edit(c, (d) => { if (d.eigrp && (String(d.eigrp.asn) === c.a.as || d.eigrp.name === c.a.as)) delete d.eigrp; else say(c, "% EIGRP process not found"); }) })] }),
+          ],
         }),
+        kw("track", "Remove a tracked object", { sub: [arg("num", "obj", "<1-1000>", "Tracked object", { run: (c) => edit(c, (d) => { if (d.tracks) delete d.tracks[c.a.obj]; }) })] }),
         kw("route-map", "Delete a route-map", {
           sub: [
             arg("word", "name", "WORD", "Route map tag", {
@@ -825,6 +890,62 @@ function removeRoute(c: Ctx) {
   });
 }
 
+/** Find or create the HSRP/VRRP group being configured on each selected interface. */
+function fhrpEdit(c: Ctx, proto: "hsrp" | "vrrp", fn: (g: FhrpGroup) => void) {
+  const group = c.a.grp !== undefined ? +c.a.grp : 0;
+  eachIf(c, (p) => {
+    p.fhrp = p.fhrp ?? [];
+    let g = p.fhrp.find((x) => x.proto === proto && x.group === group);
+    if (!g) {
+      const v = p.hsrpVersion;
+      g = { proto, group, ...(proto === "hsrp" && v === 2 ? { version: 2 as const } : {}) };
+      p.fhrp.push(g);
+    }
+    fn(g);
+  });
+}
+
+function dropFhrp(c: Ctx, proto: "hsrp" | "vrrp") {
+  const group = c.a.grp !== undefined ? +c.a.grp : 0;
+  eachIf(c, (p) => {
+    p.fhrp = (p.fhrp ?? []).filter((x) => !(x.proto === proto && x.group === group));
+    if (!p.fhrp.length) delete p.fhrp;
+  });
+}
+
+function fhrpCmds(proto: "hsrp" | "vrrp", neg: boolean): Node[] {
+  const tr = (c: Ctx, dec: number) =>
+    fhrpEdit(c, proto, (g) => {
+      const isObj = /^\d+$/.test(c.a.trk);
+      const t = isObj ? { object: +c.a.trk, decrement: dec } : { iface: canonIf(c.a.trk) ?? c.a.trk, decrement: dec };
+      const same = (x: { object?: number; iface?: string }) => (isObj ? x.object === +c.a.trk : x.iface === t.iface);
+      g.track = [...(g.track ?? []).filter((x) => !same(x)), ...(neg ? [] : [t])];
+      if (!g.track.length) delete g.track;
+    });
+  return [
+    kw("ip", "Enable group and set virtual IP address", {
+      run: neg ? (c) => fhrpEdit(c, proto, (g) => delete g.ip) : undefined,
+      sub: neg ? [] : [arg("ip", "vip", "A.B.C.D", "Virtual IP address", { run: (c) => fhrpEdit(c, proto, (g) => (g.ip = c.a.vip)) })],
+    }),
+    kw("priority", "Priority level", {
+      run: neg ? (c) => fhrpEdit(c, proto, (g) => delete g.priority) : undefined,
+      sub: neg ? [] : [arg("num", "prio", proto === "hsrp" ? "<0-255>" : "<1-254>", "Priority value", { range: proto === "hsrp" ? [0, 255] : [1, 254], run: (c) => fhrpEdit(c, proto, (g) => (g.priority = +c.a.prio === 100 ? undefined : +c.a.prio)) })],
+    }),
+    kw("preempt", "Overthrow lower priority designated routers", { run: (c) => fhrpEdit(c, proto, (g) => (proto === "hsrp" ? (neg ? delete g.preempt : (g.preempt = true)) : neg ? (g.preempt = false) : delete g.preempt)) }),
+    kw("track", "Priority tracking", {
+      sub: [
+        arg("word", "trk", "<1-1000> | interface", "Tracked object number or interface", {
+          run: (c) => tr(c, 10),
+          sub: [
+            kw("decrement", "Priority decrement", { sub: [arg("num", "dec", "<1-255>", "Decrement value", { range: [1, 255], run: (c) => tr(c, +c.a.dec) })] }),
+            arg("num", "dec", "<1-255>", "Decrement value (older syntax)", { range: [1, 255], run: (c) => tr(c, +c.a.dec) }),
+          ],
+        }),
+      ],
+    }),
+  ];
+}
+
 function ifTree(): Node[] {
   return [
     kw("ip", "Interface Internet Protocol config commands", {
@@ -855,6 +976,24 @@ function ifTree(): Node[] {
         }),
       ],
     }),
+    kw("encapsulation", "Set encapsulation type for an interface", {
+      when: (c) => c.s.mode.m === "if" && c.s.mode.ifs.every((n) => !!parentOf(n)),
+      sub: [
+        kw("dot1q", "IEEE 802.1Q Virtual LAN", {
+          sub: [
+            arg("num", "vlan", "<1-4094>", "IEEE 802.1Q VLAN ID", {
+              range: [1, 4094],
+              run: (c) => portOnly(c, "", (p) => { p.encap = { vlan: +c.a.vlan }; }),
+              sub: [kw("native", "Make this as native vlan", { run: (c) => portOnly(c, "", (p) => { p.encap = { vlan: +c.a.vlan, native: true }; }) })],
+            }),
+          ],
+        }),
+      ],
+    }),
+    kw("bandwidth", "Set bandwidth informational parameter", { when: isL3, sub: [arg("num", "bw", "<1-100000000>", "Bandwidth in kilobits", { range: [1, 100000000], run: (c) => eachIf(c, (p) => { p.bandwidth = +c.a.bw; }) })] }),
+    kw("delay", "Specify interface throughput delay", { when: isL3, sub: [arg("num", "dly", "<1-16777215>", "Throughput delay (tens of microseconds)", { range: [1, 16777215], run: (c) => eachIf(c, (p) => { p.delay = +c.a.dly; }) })] }),
+    kw("standby", "HSRP interface configuration commands", { when: isL3, sub: [kw("version", "HSRP version", { sub: [arg("num", "v", "<1-2>", "Version", { range: [1, 2], run: (c) => eachIf(c, (p) => { for (const g of (p.fhrp ?? []).filter((x) => x.proto === "hsrp")) { if (+c.a.v === 2) g.version = 2; else delete g.version; } if (+c.a.v === 2) p.hsrpVersion = 2; else delete p.hsrpVersion; }) })] }), arg("num", "grp", "<0-4095>", "group number", { range: [0, 4095], sub: fhrpCmds("hsrp", false) }), ...fhrpCmds("hsrp", false)] }),
+    kw("vrrp", "VRRP Interface configuration commands", { when: isL3, sub: [arg("num", "grp", "<1-255>", "Group number", { range: [1, 255], sub: fhrpCmds("vrrp", false) })] }),
     kw("shutdown", "Shutdown the selected interface", {
       run: (c) => {
         const before = new Net(c.topo);
@@ -960,6 +1099,11 @@ function ifTree(): Node[] {
           ],
         }),
         kw("channel-group", "Remove the port from its channel group", { run: (c) => portOnly(c, "% Not applicable", (p) => { delete p.channel; }) }),
+        kw("encapsulation", "Remove the encapsulation", { sub: [kw("dot1q", "IEEE 802.1Q", { run: (c) => portOnly(c, "", (p) => { delete p.encap; }), sub: [arg("line", "x", "LINE", "VLAN", { run: (c) => portOnly(c, "", (p) => { delete p.encap; }) })] })] }),
+        kw("bandwidth", "Reset bandwidth", { run: (c) => eachIf(c, (p) => { delete p.bandwidth; }), sub: [arg("line", "x", "LINE", "value", { run: (c) => eachIf(c, (p) => { delete p.bandwidth; }) })] }),
+        kw("delay", "Reset delay", { run: (c) => eachIf(c, (p) => { delete p.delay; }), sub: [arg("line", "x", "LINE", "value", { run: (c) => eachIf(c, (p) => { delete p.delay; }) })] }),
+        kw("standby", "HSRP interface configuration commands", { sub: [arg("num", "grp", "<0-4095>", "group number", { range: [0, 4095], run: (c) => dropFhrp(c, "hsrp"), sub: fhrpCmds("hsrp", true) }), ...fhrpCmds("hsrp", true)] }),
+        kw("vrrp", "VRRP Interface configuration commands", { sub: [arg("num", "grp", "<1-255>", "Group number", { range: [1, 255], run: (c) => dropFhrp(c, "vrrp"), sub: fhrpCmds("vrrp", true) })] }),
         kw("description", "Remove description", { run: (c) => portOnly(c, "", (p) => { delete p.description; }) }),
         kw("spanning-tree", "Spanning Tree Subsystem", { sub: [arg("line", "x", "LINE", "feature", { run: accepted })] }),
       ],
@@ -1551,6 +1695,115 @@ function ospfTree(): Node[] {
   ];
 }
 
+function eigrpTree(): Node[] {
+  const ei = (c: Ctx, fn: (e: NonNullable<Device["eigrp"]>) => void) => edit(c, (d) => d.eigrp && fn(d.eigrp));
+  const mode = (c: Ctx) => c.s.mode as Extract<Mode, { m: "eigrp" }>;
+  const classic = (c: Ctx) => !mode(c).named;
+  const top = (c: Ctx) => !!mode(c).named && !mode(c).sub;
+  const af = (c: Ctx) => mode(c).sub === "af";
+  const afif = (c: Ctx) => mode(c).sub === "afif";
+  const topo = (c: Ctx) => mode(c).sub === "topo";
+  const either = (c: Ctx) => classic(c) || af(c);
+  const network = (neg: boolean) =>
+    arg("ip", "ip", "A.B.C.D", "Network number", {
+      run: (c) => netStmt(c, neg),
+      sub: [arg("mask", "wc", "A.B.C.D", "EIGRP wild card bits", { run: (c) => netStmt(c, neg) })],
+    });
+  const netStmt = (c: Ctx, neg: boolean) => {
+    if (c.a.wc && wildcardToLen(c.a.wc) === null) return say(c, "% Invalid wildcard mask");
+    ei(c, (e) => {
+      const same = (n: { ip: string; wildcard?: string }) => n.ip === c.a.ip && (n.wildcard ?? "") === (c.a.wc ?? "");
+      if (neg) {
+        if (!e.networks.some(same)) say(c, "% EIGRP: Network statement not found");
+        e.networks = e.networks.filter((n) => !same(n));
+      } else if (!e.networks.some(same)) e.networks.push(c.a.wc ? { ip: c.a.ip, wildcard: c.a.wc } : { ip: c.a.ip });
+    });
+  };
+  const setPassive = (c: Ctx, name: string | "default", neg: boolean) =>
+    ei(c, (e) => {
+      if (name === "default") {
+        e.passiveDefault = !neg || undefined;
+        e.passive = [];
+        e.noPassive = [];
+        return;
+      }
+      const without = (l?: string[]) => (l ?? []).filter((n) => n !== name);
+      if (e.passiveDefault) e.noPassive = neg ? [...without(e.noPassive), name] : without(e.noPassive);
+      else e.passive = neg ? without(e.passive) : [...without(e.passive), name];
+    });
+  const passiveClassic = (neg: boolean) =>
+    kw("passive-interface", "Suppress routing updates on an interface", {
+      when: classic,
+      sub: [kw("default", "Suppress routing updates on all interfaces", { run: (c) => setPassive(c, "default", neg) }), arg("iface", "if", "<interface>", "Interface", { run: (c) => setPassive(c, c.a.if, neg) })],
+    });
+  const afIfName = (c: Ctx) => mode(c).afIf ?? "default";
+  const redist = (neg: boolean) =>
+    kw("redistribute", "Redistribute IPv4 routes from another routing protocol", {
+      when: (c) => classic(c) || topo(c),
+      sub: (["static", "connected"] as const).map((k) =>
+        kw(k, `${k === "static" ? "Static" : "Connected"} routes`, { run: (c) => ei(c, (e) => { e.redistribute = [...(e.redistribute ?? []).filter((x) => x !== k), ...(neg ? [] : [k])]; if (!e.redistribute.length) delete e.redistribute; }) }),
+      ),
+    });
+  const variance = kw("variance", "Control load balancing variance", {
+    when: (c) => classic(c) || topo(c),
+    sub: [arg("num", "v", "<1-128>", "Metric variance multiplier", { range: [1, 128], run: (c) => ei(c, (e) => (e.variance = +c.a.v === 1 ? undefined : +c.a.v)) })],
+  });
+  return [
+    kw("network", "Enable routing on an IP network", { when: either, sub: [network(false)] }),
+    passiveClassic(false),
+    variance,
+    redist(false),
+    kw("eigrp", "EIGRP specific commands", { when: either, sub: [kw("router-id", "router id for this EIGRP process", { sub: [arg("ip", "rid", "A.B.C.D", "EIGRP Router-ID in IP address format", { run: (c) => ei(c, (e) => (e.routerId = c.a.rid)) })] })] }),
+    kw("auto-summary", "Enable automatic network number summarization", { when: classic, run: notSimulated("EIGRP auto-summary") }),
+    kw("address-family", "Enter Address Family command mode", {
+      when: top,
+      sub: [
+        kw("ipv4", "Address family", {
+          sub: [
+            kw("unicast", "Address Family modifier", { sub: [kw("autonomous-system", "Specify Address-Family Autonomous System Number", { sub: [arg("num", "asn", "<1-65535>", "Autonomous System Number", { range: [1, 65535], run: (c) => afEnter(c) })] })] }),
+            kw("autonomous-system", "Specify Address-Family Autonomous System Number", { sub: [arg("num", "asn", "<1-65535>", "Autonomous System Number", { range: [1, 65535], run: (c) => afEnter(c) })] }),
+          ],
+        }),
+      ],
+    }),
+    kw("af-interface", "Enter Address Family interface configuration", {
+      when: af,
+      sub: [kw("default", "Address family default interface configuration", { run: (c) => (c.s.mode = { m: "eigrp", named: true, sub: "afif" }) }), arg("iface", "if", "<interface>", "Interface name", { run: (c) => (c.s.mode = { m: "eigrp", named: true, sub: "afif", afIf: c.a.if }) })],
+    }),
+    kw("passive-interface", "Suppress address updates on an interface", { when: afif, run: (c) => setPassive(c, afIfName(c), false) }),
+    kw("exit-af-interface", "Exit from Address Family Interface configuration mode", { when: afif, run: (c) => (c.s.mode = { m: "eigrp", named: true, sub: "af" }) }),
+    kw("topology", "Topology configuration mode", { when: af, sub: [kw("base", "Base topology", { run: (c) => (c.s.mode = { m: "eigrp", named: true, sub: "topo" }) })] }),
+    kw("exit-af-topology", "Exit from Address Family Topology configuration mode", { when: topo, run: (c) => (c.s.mode = { m: "eigrp", named: true, sub: "af" }) }),
+    kw("exit-address-family", "Exit Address Family configuration mode", { when: af, run: (c) => (c.s.mode = { m: "eigrp", named: true }) }),
+    kw("no", "Negate a command or set its defaults", {
+      sub: [
+        kw("network", "Disable routing on an IP network", { when: either, sub: [network(true)] }),
+        passiveClassic(true),
+        kw("passive-interface", "Allow updates on this interface", { when: afif, run: (c) => setPassive(c, afIfName(c), true) }),
+        kw("variance", "Reset variance", { when: (c) => classic(c) || topo(c), run: (c) => ei(c, (e) => delete e.variance), sub: [arg("line", "x", "LINE", "value", { run: (c) => ei(c, (e) => delete e.variance) })] }),
+        redist(true),
+        kw("eigrp", "EIGRP specific commands", { when: either, sub: [kw("router-id", "Remove the router id", { run: (c) => ei(c, (e) => delete e.routerId) })] }),
+        kw("auto-summary", "Disable automatic summarization (the default)", { run: accepted }),
+      ],
+    }),
+    kw("do", "To run exec commands in config mode", { sub: [arg("line", "cmd", "LINE", "Exec Command", { run: (c) => runDo(c) })] }),
+    kw("exit", "Exit from this configuration mode", {
+      run: (c) => {
+        const m = mode(c);
+        c.s.mode = !m.named || !m.sub ? { m: "config" } : m.sub === "af" ? { m: "eigrp", named: true } : { m: "eigrp", named: true, sub: "af" };
+      },
+    }),
+    kw("end", "Exit to privileged EXEC", { run: (c) => (c.s.mode = { m: "exec" }) }),
+  ];
+}
+
+function afEnter(c: Ctx) {
+  const e = c.dev.eigrp;
+  if (e?.asn && e.asn !== +c.a.asn) return say(c, `% Wire Room simulates one address family per EIGRP instance (AS ${e.asn}).`);
+  edit(c, (d) => d.eigrp && (d.eigrp.asn = +c.a.asn));
+  c.s.mode = { m: "eigrp", named: true, sub: "af" };
+}
+
 const TREES: Record<Mode["m"], Node[]> = {
   exec: execTree(),
   config: configTree(),
@@ -1562,6 +1815,7 @@ const TREES: Record<Mode["m"], Node[]> = {
   dhcp: dhcpTree(),
   bgp: bgpTree(),
   rmap: rmapTree(),
+  eigrp: eigrpTree(),
 };
 
 function runDo(c: Ctx) {
@@ -1692,7 +1946,7 @@ export function runCli(line: string, s: Session, topo: Topology, net: Net): CliR
     return { out: listHelp(head.length ? w.level : root, c, !!w.node?.run && !partial, partial ? tokens[tokens.length - 1] : ""), session: s };
   }
   dispatch(c, root, line);
-  if (c.changed) c.lines.push(...adjChanges(net, new Net(c.topo), c.s.dev));
+  if (c.changed) c.lines.push(...adjChanges(net, new Net(c.topo, net), c.s.dev));
   return { out: c.lines.join("\n"), session: c.s, topo: c.changed ? c.topo : undefined, probe: c.probe, renamed: c.renamed };
 }
 
@@ -1736,6 +1990,39 @@ function adjChanges(before: Net, after: Net, dev: string): string[] {
     if (now.has(k) || st !== "FULL") continue;
     const [iface, rid] = k.split("|");
     out.push(`%OSPF-5-ADJCHG: Process ${pid}, Nbr ${rid} on ${longIf(iface)} from FULL to DOWN, Neighbor Down: ${after.ospf().problems.some((p) => p.dev === dev && p.iface === iface) ? "Dead timer expired" : "Interface down or detached"}`);
+  }
+  // EIGRP neighbour changes.
+  const asn = after.device(dev)?.eigrp?.asn ?? before.device(dev)?.eigrp?.asn;
+  const ek = (n: { iface: string; peerIp: string }) => `${n.iface}|${n.peerIp}`;
+  const ewas = new Set(before.device(dev)?.eigrp ? before.eigrp().nbrs.filter((n) => n.dev === dev).map(ek) : []);
+  const enow = new Set(after.device(dev)?.eigrp ? after.eigrp().nbrs.filter((n) => n.dev === dev).map(ek) : []);
+  for (const k of enow) if (!ewas.has(k)) out.push(`%DUAL-5-NBRCHANGE: EIGRP-IPv4 ${asn}: Neighbor ${k.split("|")[1]} (${longIf(k.split("|")[0])}) is up: new adjacency`);
+  for (const k of ewas) {
+    if (enow.has(k)) continue;
+    const iface = k.split("|")[0];
+    const passive = after.device(dev)?.eigrp ? after.eigrp().enabled.get(dev)?.find((x) => x.iface === iface)?.passive : false;
+    const why = !after.device(dev)?.eigrp ? "process terminated" : passive ? "interface passive" : "interface down";
+    out.push(`%DUAL-5-NBRCHANGE: EIGRP-IPv4 ${asn}: Neighbor ${k.split("|")[1]} (${longIf(iface)}) is down: ${why}`);
+  }
+  if (after.device(dev)?.eigrp) {
+    const old = new Set(before.device(dev)?.eigrp ? before.eigrp().problems.filter((p) => p.dev === dev).map((p) => p.text) : []);
+    for (const p of after.eigrp().problems.filter((x) => x.dev === dev)) if (!old.has(p.text)) out.push(p.text);
+  }
+  // HSRP / VRRP state changes on this device.
+  const st = (n: Net) => {
+    const m = new Map<string, string>();
+    for (const g of n.fhrp().groups)
+      for (const x of g.members.filter((y) => y.dev === dev)) {
+        const s = !g.vip ? "Init" : g.active === x ? (g.proto === "hsrp" ? "Active" : "Master") : g.proto === "hsrp" ? (g.standby === x ? "Standby" : "Listen") : "Backup";
+        m.set(`${g.proto}|${x.iface}|${g.group}`, s);
+      }
+    return m;
+  };
+  const fwas = st(before);
+  for (const [k, s] of st(after)) {
+    const [proto, iface, grp] = k.split("|");
+    const w = fwas.get(k) ?? (proto === "hsrp" ? "Speak" : "Init");
+    if (w !== s) out.push(proto === "hsrp" ? `%HSRP-5-STATECHANGE: ${iface} Grp ${grp} state ${w} -> ${s}` : `%VRRP-6-STATECHANGE: ${iface} Grp ${grp} state ${w} -> ${s}`);
   }
   // BGP session changes.
   const bk = (x: { peerIp: string }) => x.peerIp;

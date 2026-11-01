@@ -1,4 +1,6 @@
-import type { Ace, ChannelMode, Device, Port, Topology } from "./types";
+import type { Ace, ChannelMode, Device, Port, Svi, Topology } from "./types";
+import { computeFhrp, type FhrpResult } from "./fhrp";
+import { computeEigrp, type EigrpResult } from "./eigrp";
 import { aclAddrMatch, cidrNet, inCidr, intToIp, ipToInt, parseCidr, type Cidr } from "./ip";
 import { computeOspf, type OspfResult } from "./ospf";
 import { computeBgp, type BgpResult } from "./bgp";
@@ -58,6 +60,9 @@ export type SimEvent = {
   dir: "out" | "back" | "ctl";
 };
 
+/** "Gi0/0.10" → "Gi0/0"; physical and logical names → undefined. */
+export const parentOf = (name: string): string | undefined => /^([A-Za-z]+[\d/]+)\.\d+$/.exec(name)?.[1];
+
 export type L3If = {
   dev: string;
   name: string;
@@ -71,7 +76,7 @@ export type L3If = {
 };
 
 /** `via` is always the directly connected next hop; `nh` keeps a BGP route's own (recursive) next hop for display. */
-export type RouteEntry = { code: "C" | "L" | "S" | "O" | "O IA" | "O*E2" | "B"; prefix: string; cidr: Cidr; via?: string; iface?: string; metric?: number; ad?: number; nh?: string };
+export type RouteEntry = { code: "C" | "L" | "S" | "O" | "O IA" | "O*E2" | "B" | "D" | "D EX"; prefix: string; cidr: Cidr; via?: string; iface?: string; metric?: number; ad?: number; nh?: string };
 
 export type StpRole = "root" | "desig" | "alt";
 export type StpView = {
@@ -120,6 +125,10 @@ export class Net {
   private stpCache = new Map<number, StpView>();
   private ospfCache?: OspfResult;
   private bgpCache?: BgpResult;
+  private fhrpCache?: FhrpResult;
+  private eigrpCache?: EigrpResult;
+  /** FHRP group key → previously active `dev|iface`, so preemption is honoured across edits. */
+  private fhrpPrev?: Map<string, string>;
   macTables = new Map<string, Map<string, { port: string; vlan: number; mac: string }>>();
   arpTables = new Map<string, Map<string, { mac: string; iface: string }>>();
   natTables = new Map<string, NatEntry[]>();
@@ -157,6 +166,8 @@ export class Net {
   /** Physical cabling state, ignoring bundling (what the port LED shows). */
   physUp(dev: string, port: string): boolean {
     const p = this.port(dev, port);
+    const parent = parentOf(port);
+    if (parent) return !!p && !p.shutdown && this.physUp(dev, parent);
     if (p && /^Lo\d+$/.test(port)) return !p.shutdown && !this.devs.get(dev)?.off;
     const peer = this.physPeers.get(`${dev}|${port}`);
     if (!p || !peer || p.shutdown || this.devs.get(dev)?.off || this.devs.get(peer[0])?.off) return false;
@@ -256,6 +267,7 @@ export class Net {
   }
 
   private inherit(prev: Net) {
+    this.fhrpPrev = prev.fhrp().activeByKey;
     // MACs are derived from device/port position, so only carry entries whose
     // devices kept their place and whose ports are still up in the same VLAN.
     for (const [dev, table] of prev.macTables) {
@@ -264,7 +276,7 @@ export class Net {
       const keep = new Map<string, { port: string; vlan: number; mac: string }>();
       for (const [k, e] of table) {
         const p = d.ports.find((x) => x.name === e.port);
-        if (p && this.linkUp(dev, e.port) && this.carries(d, p, e.vlan)) keep.set(k, e);
+        if (p && this.linkUp(dev, e.port) && this.carries(d, p, e.vlan) && !e.mac.startsWith("0000.")) keep.set(k, e);
       }
       this.macTables.set(dev, keep);
     }
@@ -294,7 +306,19 @@ export class Net {
     return this.topo.devices;
   }
   peer(dev: string, port: string) {
-    return this.peers.get(`${dev}|${port}`);
+    return this.peers.get(`${dev}|${parentOf(port) ?? port}`);
+  }
+  /**
+   * Which routed interface on a router port receives a frame with this 802.1Q tag:
+   * the subinterface with that encapsulation, or (untagged) the native-VLAN
+   * subinterface or the physical port itself.
+   */
+  rxIfName(dev: string, port: string, tag?: number): string | undefined {
+    const d = this.devs.get(dev);
+    if (!d) return undefined;
+    const subs = d.ports.filter((p) => p.encap && parentOf(p.name) === port);
+    if (tag !== undefined) return subs.find((p) => !p.encap!.native && p.encap!.vlan === tag)?.name;
+    return subs.find((p) => p.encap!.native)?.name ?? port;
   }
   port(dev: string, name: string): Port | undefined {
     return this.devs.get(dev)?.ports.find((p) => p.name === name);
@@ -311,6 +335,8 @@ export class Net {
   }
 
   macOf(dev: string, port: string): string {
+    // Subinterfaces share their parent's burned-in MAC, as on IOS.
+    port = parentOf(port) ?? port;
     const d = this.devs.get(dev)!;
     const di = this.devIdx.get(dev)!;
     const pi = d.ports.findIndex((p) => p.name === port);
@@ -330,6 +356,8 @@ export class Net {
    */
   linkUp(dev: string, port: string): boolean {
     const p = this.port(dev, port);
+    const parent = parentOf(port);
+    if (parent) return !!p && !!p.encap && !p.shutdown && this.linkUp(dev, parent);
     if (p && /^Lo\d+$/.test(port)) return !p.shutdown && !this.devs.get(dev)?.off;
     if (/^Po\d+$/.test(port)) {
       const b = this.bundles.find((x) => x.dev === dev && x.po === port);
@@ -394,10 +422,15 @@ export class Net {
         const shadowed = c && out.some((x) => x.code === "C" && x.cidr.net === c.net && x.cidr.len === c.len);
         if (c && egress && !shadowed) out.push({ code: "S", prefix: cidrNet(c), cidr: c, via: r.via, iface: egress.name });
       }
-      // OSPF (AD 110) only fills prefixes that connected and static routes don't already own.
-      for (const r of this.ospf().routes.get(devId) ?? []) {
-        if (!out.some((x) => x.code !== "L" && x.prefix === r.prefix)) out.push(r);
-      }
+      // Dynamic routes fill prefixes in administrative-distance order:
+      // EIGRP internal (90), OSPF (110), then EIGRP external (170).
+      const fill = (list: RouteEntry[]) => {
+        for (const r of list) if (!out.some((x) => x.code !== "L" && x.prefix === r.prefix)) out.push(r);
+      };
+      const eigrp = d.eigrp ? (this.eigrp().routes.get(devId) ?? []) : [];
+      fill(eigrp.filter((r) => r.code === "D"));
+      fill(this.ospf().routes.get(devId) ?? []);
+      fill(eigrp.filter((r) => r.code === "D EX"));
     }
     return out;
   }
@@ -407,7 +440,7 @@ export class Net {
     const base = this.baseRoutes(devId);
     const bgp = this.bgp().routes.get(devId) ?? [];
     if (!bgp.length) return base;
-    const ad = (r: RouteEntry) => r.ad ?? ({ C: 0, L: 0, S: 1, O: 110, "O IA": 110, "O*E2": 110, B: 20 } as const)[r.code];
+    const ad = (r: RouteEntry) => r.ad ?? ({ C: 0, L: 0, S: 1, O: 110, "O IA": 110, "O*E2": 110, B: 20, D: 90, "D EX": 170 } as const)[r.code];
     const out = [...base];
     for (const b of bgp) {
       const i = out.findIndex((x) => x.code !== "L" && x.prefix === b.prefix);
@@ -415,6 +448,41 @@ export class Net {
       else if (ad(b) < ad(out[i])) out[i] = b;
     }
     return out;
+  }
+
+  /** The Port or SVI object behind an L3 interface name. */
+  ifObj(dev: string, name: string): Port | Svi | undefined {
+    const d = this.devs.get(dev);
+    if (!d) return undefined;
+    const m = /^Vlan(\d+)$/.exec(name);
+    return m ? d.svis?.find((s) => s.vlan === +m[1]) : d.ports.find((p) => p.name === name);
+  }
+
+  /** Take only HSRP/VRRP history (who was active) from another network, nothing learned. */
+  withFhrpHistory(prev: Net) {
+    this.fhrpPrev = prev.fhrp().activeByKey;
+    this.fhrpCache = undefined;
+    return this;
+  }
+
+  fhrp(): FhrpResult {
+    if (!this.fhrpCache) this.fhrpCache = computeFhrp(this, this.fhrpPrev);
+    return this.fhrpCache;
+  }
+
+  eigrp(): EigrpResult {
+    if (!this.eigrpCache) this.eigrpCache = computeEigrp(this);
+    return this.eigrpCache;
+  }
+
+  /** Virtual IPs (HSRP/VRRP) this interface answers for right now. */
+  vipsOn(dev: string, iface: string) {
+    return this.fhrp().owned.get(`${dev}|${iface}`) ?? [];
+  }
+
+  /** Is this one of the device's own addresses, real or virtual? */
+  isMine(dev: string, ip: string): boolean {
+    return this.l3Ifs(dev).some((i) => i.up && (i.cidr.ip === ip || this.vipsOn(dev, i.name).some((v) => v.vip === ip)));
   }
 
   bgp(): BgpResult {
@@ -463,6 +531,8 @@ export class Net {
           ? `connected network ${best.prefix}`
           : best.code === "B"
             ? `BGP route ${best.prefix} [${best.ad}/${best.metric ?? 0}] with BGP next hop ${best.nh}, resolved recursively to ${best.via}`
+            : best.code.startsWith("D")
+              ? `EIGRP route ${best.code} ${best.prefix} [${best.ad}/${best.metric}] via ${best.via}`
             : `OSPF route ${best.code} ${best.prefix} [110/${best.metric}] via ${best.via}`;
     return { iface, nextHop, why: `longest match is ${label}, out ${iface.name}` };
   }
@@ -600,6 +670,12 @@ export class Net {
   }
 
   private transmit(dev: string, port: string, frame: Frame, tag?: number) {
+    const parent = parentOf(port);
+    if (parent) {
+      const sub = this.port(dev, port);
+      tag = sub?.encap && !sub.encap.native ? sub.encap.vlan : undefined;
+      port = parent;
+    }
     const peer = this.peer(dev, port);
     if (!peer || !this.linkUp(dev, port)) {
       this.log({ dev, kind: "drop", frame, note: `${port} is down, so the frame cannot leave` });
@@ -649,6 +725,11 @@ export class Net {
     const sviMac = d.svis?.length ? this.sviMac(d.id) : null;
     const svi = d.svis?.find((s) => s.vlan === vlan) && this.sviUp(d, vlan) ? this.l3Ifs(d.id).find((i) => i.name === `Vlan${vlan}`) : undefined;
 
+    if (inPort && svi && this.vipsOn(d.id, svi.name).some((v) => v.vmac === frame.dst)) {
+      this.log({ dev: d.id, kind: "proc", frame, note: `${pre}the destination is the virtual MAC my Vlan${vlan} owns as the active FHRP router, so it goes up to the routing engine` });
+      this.rxL3(d, svi, frame);
+      return;
+    }
     if (inPort && sviMac && frame.dst === sviMac) {
       if (!svi) {
         this.log({ dev: d.id, kind: "drop", frame, note: `${pre}the frame is for interface Vlan${vlan}, but that SVI is down or missing` });
@@ -690,14 +771,33 @@ export class Net {
   // --- layer 3 ---------------------------------------------------------------
 
   private rxL3(d: Device, ifc: L3If, frame: Frame) {
-    if (frame.dst !== ifc.mac && frame.dst !== BCAST) {
+    const vips = this.vipsOn(d.id, ifc.name);
+    if (frame.dst !== ifc.mac && frame.dst !== BCAST && !vips.some((v) => v.vmac === frame.dst)) {
+      const standby = this.fhrp().groups.find((g) => g.vmac === frame.dst && g.members.some((m) => m.dev === d.id && m.iface === ifc.name));
+      if (standby) {
+        this.log({ dev: d.id, kind: "ignore", frame, note: `the frame is for virtual MAC ${frame.dst} (${standby.proto.toUpperCase()} group ${standby.group}), but I am not the active router for it, so I ignore it` });
+        return;
+      }
       this.log({ dev: d.id, kind: "ignore", frame, note: `the destination MAC ${frame.dst} is not mine, so the frame is ignored` });
       return;
     }
     if (frame.arp) {
       const a = frame.arp;
       const natProxy = a.targetIp !== ifc.cidr.ip && this.natRole(d, ifc.name) === "outside" && inCidr(a.targetIp, ifc.cidr) && this.natGlobals(d).has(a.targetIp);
+      const vip = vips.find((v) => v.vip === a.targetIp);
+      if (vip && a.op === "request") {
+        this.learnArp(d.id, a.senderIp, a.senderMac, ifc.name);
+        const g = vip.state;
+        this.log({ dev: d.id, kind: "proc", frame, note: `"who has ${a.targetIp}?" That is the virtual IP of ${g.proto.toUpperCase()} group ${g.group}, and I am the active router, so I answer with the virtual MAC ${vip.vmac}` });
+        this.emit(d, ifc, { src: vip.vmac, dst: a.senderMac, arp: { op: "reply", senderIp: vip.vip, senderMac: vip.vmac, targetIp: a.senderIp, targetMac: a.senderMac } });
+        return;
+      }
       if (a.targetIp !== ifc.cidr.ip && !natProxy) {
+        const g = this.fhrp().groups.find((x) => x.vip === a.targetIp && x.members.some((m) => m.dev === d.id && m.iface === ifc.name));
+        if (g) {
+          this.log({ dev: d.id, kind: "ignore", frame, note: `${a.targetIp} is the ${g.proto.toUpperCase()} group ${g.group} virtual IP, but ${g.active ? `${g.active.dev} is active` : "the group has no active router"}, so I stay quiet` });
+          return;
+        }
         this.log({ dev: d.id, kind: "ignore", frame, note: `the ARP is for ${a.targetIp}, which is not my address, so I ignore it` });
         return;
       }
@@ -724,7 +824,7 @@ export class Net {
     // Outside → inside: NAT happens before routing.
     if (d.nat && this.natRole(d, ifc.name) === "outside") pkt = this.natIn(d, pkt, frame);
 
-    const mine = this.l3Ifs(d.id).some((i) => i.up && i.cidr.ip === pkt.dst);
+    const mine = this.isMine(d.id, pkt.dst);
     if (mine) {
       this.deliver(d, pkt, frame);
       return;
@@ -922,7 +1022,7 @@ export class Net {
   private originate(d: Device, pkt: Pkt) {
     const frame: Frame = { src: "", dst: "", ip: pkt };
     // Traffic to one of my own addresses never touches the wire.
-    if (this.l3Ifs(d.id).some((i) => i.up && i.cidr.ip === pkt.dst)) {
+    if (this.isMine(d.id, pkt.dst)) {
       this.log({ dev: d.id, kind: "proc", frame, note: `${pkt.dst} is my own address, so the packet is handled locally` });
       this.deliver(d, pkt, frame);
       return;
@@ -997,13 +1097,18 @@ export class Net {
       if (this.isSwitch(d) && this.portMode(d, p) !== "routed") {
         this.rxSwitchPort(d, p, frame, tag);
       } else {
-        const ifc = this.l3Ifs(dev).find((i) => i.name === port);
-        if (!ifc) {
-          this.log({ dev, kind: "drop", frame, note: `${port} has no IP address, so there is nothing to process the frame` });
+        const name = this.rxIfName(dev, port, tag);
+        if (!name) {
+          this.log({ dev, kind: "drop", frame, tag, note: `a frame tagged for VLAN ${tag} arrived on ${port}, but no subinterface has 'encapsulation dot1Q ${tag}', so it is dropped` });
           continue;
         }
-        if (tag !== undefined) {
-          this.log({ dev, kind: "drop", frame, note: `an 802.1Q-tagged frame arrived on a routed port. Missing subinterface or trunk mismatch` });
+        const ifc = this.l3Ifs(dev).find((i) => i.name === name);
+        if (!ifc) {
+          this.log({ dev, kind: "drop", frame, note: `${name} has no IP address, so there is nothing to process the frame` });
+          continue;
+        }
+        if (!ifc.up) {
+          this.log({ dev, kind: "drop", frame, note: `${name} is down${parentOf(name) ? " (shut down, or missing its encapsulation)" : ""}, so the frame is dropped` });
           continue;
         }
         this.rxL3(d, ifc, frame);

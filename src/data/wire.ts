@@ -910,4 +910,232 @@ scenarios.push(
   },
 );
 
+// --- Router-on-a-stick (802.1Q subinterfaces) --------------------------------------------
+
+export function roasLab(): Topology {
+  const s1 = sw("SW1", 400, 230, 24);
+  s1.ports[0].vlan = 10;
+  s1.ports[1].vlan = 20;
+  Object.assign(s1.ports[23], { mode: "trunk" as const, allowed: [10, 20] });
+  return {
+    devices: [
+      router("R1", 400, 110, [{ name: "Gi0/0" }, { name: "Gi0/0.10", encap: { vlan: 10 }, ip: "10.10.10.1/24" }, { name: "Gi0/0.20", encap: { vlan: 20 }, ip: "10.20.20.1/24" }, ...down("Gi0/1")]),
+      s1,
+      host("PC10", "pc", 120, 330, "10.10.10.10/24", "10.10.10.1"),
+      host("PC20", "pc", 680, 330, "10.20.20.20/24", "10.20.20.1"),
+    ],
+    links: [
+      { a: ["R1", "Gi0/0"], b: ["SW1", "Gi1/0/24"] },
+      { a: ["PC10", "eth0"], b: ["SW1", "Gi1/0/1"] },
+      { a: ["PC20", "eth0"], b: ["SW1", "Gi1/0/2"] },
+    ],
+    notes: [{ id: "n-roas", kind: "text", x: 470, y: 170, w: 240, h: 40, text: "one trunk, two VLANs, one router port" }],
+  };
+}
+const roasTweak = (fn: (t: Topology) => void): Topology => {
+  const t = roasLab();
+  fn(t);
+  return t;
+};
+const roasReach: Scenario["goals"] = [{ type: "reachAll", pairs: [["PC10", "10.20.20.20"], ["PC20", "10.10.10.10"]], label: "PC10 and PC20 reach each other through R1" }];
+
+scenarios.push(
+  {
+    id: "roas",
+    title: "Router-on-a-stick example",
+    exam: "encor",
+    objective: "3.1.a",
+    kind: "sandbox",
+    brief: "One router port, one 802.1Q trunk, two VLANs. R1 routes between VLAN 10 and 20 with subinterfaces Gi0/0.10 and Gi0/0.20. Ping PC20 from PC10 and follow the packet walk: the frame leaves SW1 tagged 10 and comes back tagged 20. Try `show ip interface brief` and `show running-config` on R1.",
+    topology: roasLab(),
+    goals: [],
+  },
+  {
+    id: "roas-encap",
+    title: "VLAN 20 lost its gateway",
+    exam: "encor",
+    objective: "3.1.a",
+    kind: "challenge",
+    brief: "Ticket #11002: since R1's config was 'tidied up', users in VLAN 20 can't reach anything, not even their default gateway. VLAN 10 is fine.",
+    hint: "The switch delivers VLAN 20 to R1 with an 802.1Q tag. Which subinterface accepts that tag? Look for the dropped frame in the packet walk.",
+    debrief: "Gi0/0.20 had `encapsulation dot1Q 30`, so frames tagged 20 matched no subinterface and R1 dropped them. The subinterface number is just a label; the encapsulation VLAN is what must match the switch's VLAN.",
+    topology: roasTweak((t) => (port(t, "R1", "Gi0/0.20").encap = { vlan: 30 })),
+    goals: roasReach,
+  },
+  {
+    id: "roas-trunk",
+    title: "The router sees no one",
+    exam: "encor",
+    objective: "3.1.a",
+    kind: "challenge",
+    brief: "Ticket #11007: a new switch was installed under R1. R1's subinterfaces are configured and up, but neither VLAN can reach its gateway.",
+    hint: "R1 sends and expects 802.1Q-tagged frames. What does SW1's port toward R1 do with a tagged frame?",
+    debrief: "SW1 Gi1/0/24 was still an access port in VLAN 1 (the default). Tagged frames from R1 were dropped, and hosts' frames left untagged. The link to a router-on-a-stick must be a trunk carrying both VLANs.",
+    topology: roasTweak((t) => Object.assign(port(t, "SW1", "Gi1/0/24"), { mode: "access", vlan: 1, allowed: undefined })),
+    goals: roasReach,
+  },
+);
+
+// --- HSRP --------------------------------------------------------------------------------
+
+/** OSPF area 0 on every interface, with the LAN side passive. */
+const ospfAll = (...passive: string[]): Ospf => ({ pid: 1, networks: [{ ip: "0.0.0.0", wildcard: "255.255.255.255", area: 0 }], passive });
+
+export function hsrpLab(): Topology {
+  const s1 = sw("SW1", 300, 260, 8);
+  const g = (prio: number, track = false): Port["fhrp"] => [{ proto: "hsrp", group: 10, ip: "10.1.1.1", priority: prio === 100 ? undefined : prio, preempt: true, version: 2, ...(track ? { track: [{ iface: "Gi0/1", decrement: 20 }] } : {}) }];
+  return {
+    devices: [
+      host("PC1", "pc", 120, 260, "10.1.1.10/24", "10.1.1.1"),
+      s1,
+      router("R1", 520, 150, [{ name: "Gi0/0", ip: "10.1.1.2/24", fhrp: g(110, true), hsrpVersion: 2 }, { name: "Gi0/1", ip: "10.0.1.1/30" }, ...down("Gi0/2")], { ospf: ospfAll("Gi0/0") }),
+      router("R2", 520, 360, [{ name: "Gi0/0", ip: "10.1.1.3/24", fhrp: g(100), hsrpVersion: 2 }, { name: "Gi0/1", ip: "10.0.2.1/30" }, ...down("Gi0/2")], { ospf: ospfAll("Gi0/0") }),
+      router("CORE", 760, 260, [{ name: "Gi0/0", ip: "10.0.1.2/30" }, { name: "Gi0/1", ip: "10.0.2.2/30" }, { name: "Gi0/2", ip: "172.16.0.1/24" }], { ospf: ospfAll("Gi0/2") }),
+      host("SRV", "server", 960, 260, "172.16.0.10/24", "172.16.0.1"),
+    ],
+    links: [
+      { a: ["PC1", "eth0"], b: ["SW1", "Gi1/0/1"] },
+      { a: ["R1", "Gi0/0"], b: ["SW1", "Gi1/0/7"] },
+      { a: ["R2", "Gi0/0"], b: ["SW1", "Gi1/0/8"] },
+      { a: ["R1", "Gi0/1"], b: ["CORE", "Gi0/0"] },
+      { a: ["R2", "Gi0/1"], b: ["CORE", "Gi0/1"] },
+      { a: ["CORE", "Gi0/2"], b: ["SRV", "eth0"] },
+    ],
+    notes: [{ id: "n-vip", kind: "text", x: 60, y: 140, w: 220, h: 40, text: "gateway 10.1.1.1 = HSRP group 10" }],
+  };
+}
+const hsrpTweak = (fn: (t: Topology) => void): Topology => {
+  const t = hsrpLab();
+  fn(t);
+  return t;
+};
+const fh = (t: Topology, id: string) => port(t, id, "Gi0/0").fhrp![0];
+const srvReach: Scenario["goals"][number] = { type: "reach", from: "PC1", to: "172.16.0.10", expect: true, label: "PC1 reaches SRV through the virtual gateway" };
+
+scenarios.push(
+  {
+    id: "hsrp",
+    title: "HSRP gateway pair example",
+    exam: "encor",
+    objective: "3.3.c",
+    kind: "sandbox",
+    brief: "R1 and R2 share the virtual gateway 10.1.1.1 (HSRPv2 group 10). R1 has priority 110 and drops by 20 if its uplink Gi0/1 fails, and both preempt. Try `show standby brief` on each router, then shut R1's Gi0/1 and watch R2 take over, while PC1 keeps the same gateway MAC. Add `vrrp 1 ip 10.1.1.254` on both to compare VRRP.",
+    topology: hsrpLab(),
+    goals: [],
+  },
+  {
+    id: "hsrp-track",
+    title: "The gateway stays on the router that lost its uplink",
+    exam: "encor",
+    objective: "3.3.c",
+    kind: "challenge",
+    brief: "Ticket #11013: R1's WAN circuit (Gi0/1) has been down since this morning. R2 and its uplink are healthy, yet users behind the 10.1.1.1 gateway can't reach the data centre.",
+    hint: "HSRP only knows about the LAN side. How can R1 learn its uplink is down, and will R2 take the active role if it doesn't preempt?",
+    debrief:
+      "R1 stayed active (priority 110) with no way out. `standby 10 track Gi0/1 decrement 20` drops it to 90 when the uplink fails, but R2 also needs `standby 10 preempt` to take over from a live active router. Tracking and preemption work as a pair.",
+    topology: hsrpTweak((t) => {
+      delete fh(t, "R1").track;
+      delete fh(t, "R2").preempt;
+      port(t, "CORE", "Gi0/0").shutdown = true;
+    }),
+    goals: [srvReach, { type: "fhrpActive", device: "R2", group: 10, label: "R2 is the active router for group 10" }],
+  },
+  {
+    id: "hsrp-vip",
+    title: "Failover works, but to the wrong address",
+    exam: "encor",
+    objective: "3.3.c",
+    kind: "challenge",
+    brief: "Ticket #11021: R1 is down for a planned IOS upgrade (its LAN port is shut). R2 became active as designed, yet every PC lost its gateway.",
+    hint: "Compare the virtual IP R2 serves with the default gateway on the PCs. `show standby brief` on R2.",
+    debrief: "R2 was configured with `standby 10 ip 10.1.1.254`. While R1 was active, R2 learned the real VIP from R1's hellos, so nothing looked wrong. Alone, it served .254. Configure the same virtual IP on every member, or omit it on the backups so they learn it.",
+    topology: hsrpTweak((t) => {
+      fh(t, "R2").ip = "10.1.1.254";
+      port(t, "R1", "Gi0/0").shutdown = true;
+    }),
+    goals: [srvReach, { type: "fhrpActive", device: "R2", group: 10, label: "R2 is the active router for group 10" }],
+  },
+);
+
+// --- EIGRP -------------------------------------------------------------------------------
+
+export function eigrpLab(): Topology {
+  const e = (extra: Partial<NonNullable<Device["eigrp"]>> = {}): Device["eigrp"] => ({ asn: 100, networks: [{ ip: "10.0.0.0" }, { ip: "192.168.0.0", wildcard: "0.0.255.255" }], ...extra });
+  return {
+    devices: [
+      host("PC1", "pc", 100, 270, "192.168.1.10/24", "192.168.1.1"),
+      router("R1", 300, 270, [{ name: "Gi0/0", ip: "192.168.1.1/24" }, { name: "Gi0/1", ip: "10.0.12.1/30" }, { name: "Gi0/2", ip: "10.0.13.1/30" }, ...down("Gi0/3")], { eigrp: e() }),
+      router("R2", 540, 140, [{ name: "Gi0/0", ip: "10.0.12.2/30" }, { name: "Gi0/1", ip: "10.0.23.1/30" }, ...down("Gi0/2", "Gi0/3")], { eigrp: e() }),
+      router("R3", 780, 270, [{ name: "Gi0/0", ip: "10.0.23.2/30" }, { name: "Gi0/1", ip: "10.0.13.2/30" }, { name: "Gi0/2", ip: "192.168.3.1/24" }, ...down("Gi0/3")], { eigrp: e() }),
+      host("SRV", "server", 980, 270, "192.168.3.10/24", "192.168.3.1"),
+    ],
+    links: [
+      { a: ["PC1", "eth0"], b: ["R1", "Gi0/0"] },
+      { a: ["R1", "Gi0/1"], b: ["R2", "Gi0/0"] },
+      { a: ["R2", "Gi0/1"], b: ["R3", "Gi0/0"] },
+      { a: ["R1", "Gi0/2"], b: ["R3", "Gi0/1"] },
+      { a: ["R3", "Gi0/2"], b: ["SRV", "eth0"] },
+    ],
+    notes: [{ id: "n-as", kind: "text", x: 470, y: 330, w: 200, h: 40, text: "EIGRP AS 100" }],
+  };
+}
+const eigrpTweak = (fn: (t: Topology) => void): Topology => {
+  const t = eigrpLab();
+  fn(t);
+  return t;
+};
+const srv3: Scenario["goals"][number] = { type: "reach", from: "PC1", to: "192.168.3.10", expect: true, label: "PC1 reaches SRV" };
+
+scenarios.push(
+  {
+    id: "eigrp",
+    title: "EIGRP triangle example",
+    exam: "encor",
+    objective: "3.2.a",
+    kind: "sandbox",
+    brief: "Three routers in EIGRP AS 100. R1 reaches 192.168.3.0/24 directly over Gi0/2 and also via R2. Run `show ip eigrp topology` on R1: the direct path is the successor and the path via R2 is a feasible successor (its reported distance is lower than the feasible distance). Raise `delay` on R1 Gi0/2 and watch the successor change. Compare with OSPF: same idea, different maths.",
+    topology: eigrpLab(),
+    goals: [],
+  },
+  {
+    id: "eigrp-as",
+    title: "R3 won't talk to anyone",
+    exam: "encor",
+    objective: "3.2.a",
+    kind: "challenge",
+    brief: "Ticket #11030: R3 was rebuilt from a template. Its interfaces are up and EIGRP is configured, but it has no neighbours and the server LAN has vanished from R1's routing table.",
+    hint: "`show ip eigrp neighbors` is empty on R3. What has to match between EIGRP neighbours that OSPF doesn't care about?",
+    debrief: "R3's template used `router eigrp 101`. EIGRP neighbours must be in the same autonomous system, and a mismatch is silent: no error, no neighbour.",
+    topology: eigrpTweak((t) => (dev(t, "R3").eigrp!.asn = 101)),
+    goals: [{ type: "eigrpNbr", device: "R1", neighbor: "R3", label: "R1 and R3 are EIGRP neighbours" }, srv3],
+  },
+  {
+    id: "eigrp-passive",
+    title: "R2 learns routes but forms no neighbours",
+    exam: "encor",
+    objective: "3.2.a",
+    kind: "challenge",
+    brief: "Ticket #11034: after a security hardening change, R2 has no EIGRP neighbours. Traffic still flows over the R1–R3 link, but the redundant path through R2 is gone.",
+    hint: "Hardening often adds `passive-interface default`. What does a passive interface do in EIGRP?",
+    debrief: "`passive-interface default` stops hellos on every interface, so R2 formed no neighbours. Its links stay advertised, but nothing is learned. Keep the default and add `no passive-interface` on the transit links.",
+    topology: eigrpTweak((t) => (dev(t, "R2").eigrp!.passiveDefault = true)),
+    goals: [
+      { type: "eigrpNbr", device: "R2", neighbor: "R1", label: "R2 and R1 are EIGRP neighbours" },
+      { type: "eigrpNbr", device: "R2", neighbor: "R3", label: "R2 and R3 are EIGRP neighbours" },
+    ],
+  },
+  {
+    id: "eigrp-metric",
+    title: "Keep traffic off the metered link",
+    exam: "encor",
+    objective: "3.2.a",
+    kind: "challenge",
+    brief: "Change #11040: the direct R1–R3 link is a metered circuit. Traffic from PC1 to the server LAN should go via R2, and the direct link should stay as an instant backup.",
+    hint: "EIGRP's metric uses the lowest bandwidth and the total delay on the path. Which interface setting changes the metric without affecting real throughput?",
+    debrief: "Raising `delay` on R1 Gi0/2 (for example `delay 100`) makes the direct path's metric worse, so the path via R2 becomes the successor. If the direct path's reported distance stays below the new feasible distance, it remains a feasible successor ready for instant failover. Bandwidth would also work but affects other features.",
+    topology: eigrpLab(),
+    goals: [{ type: "route", device: "R1", prefix: "192.168.3.0/24", code: "D", via: "10.0.12.2", expect: true, label: "R1 routes to 192.168.3.0/24 via R2 (10.0.12.2)" }, srv3],
+  },
+);
+
 export const scenarioById = Object.fromEntries(scenarios.map((s) => [s.id, s]));

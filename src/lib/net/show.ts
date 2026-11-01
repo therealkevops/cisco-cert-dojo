@@ -1,5 +1,5 @@
-import type { Net } from "./engine";
-import type { Device, IfOspf } from "./types";
+import { parentOf, type Net } from "./engine";
+import type { Device, FhrpGroup, IfOspf } from "./types";
 import { aclSpecToIos, dottedMask, inCidr, intToIp, ipToInt, parseCidr } from "./ip";
 
 // IOS-flavoured renderings of simulator state, so the inspector reads like a
@@ -11,7 +11,7 @@ export function showIpIntBrief(net: Net, dev: string): string {
   const d = net.device(dev);
   const rows = [pad("Interface", 22) + pad("IP-Address", 16) + pad("Status", 22) + "Protocol"];
   const l3 = new Map(net.l3Ifs(dev).map((i) => [i.name, i]));
-  for (const p of d.ports) {
+  for (const p of byParent(d.ports)) {
     const ip = l3.get(p.name)?.cidr.ip ?? "unassigned";
     const up = /^Po\d+$/.test(p.name) ? net.linkUp(dev, p.name) : net.physUp(dev, p.name);
     const status = p.shutdown ? "administratively down" : up ? "up" : "down";
@@ -25,27 +25,29 @@ export function showIpIntBrief(net: Net, dev: string): string {
 }
 
 export function showIpRoute(net: Net, dev: string, only?: string): string {
-  const routes = net.routes(dev).filter((r) => !only || (only === "ospf" ? r.code.startsWith("O") : only === "bgp" ? r.code === "B" : only === "static" ? r.code === "S" : r.code === "C" || r.code === "L"));
+  const routes = net
+    .routes(dev)
+    .filter((r) => !only || (only === "ospf" ? r.code.startsWith("O") : only === "eigrp" ? r.code.startsWith("D") : only === "bgp" ? r.code === "B" : only === "static" ? r.code === "S" : r.code === "C" || r.code === "L"));
   const gw = routes.find((r) => r.prefix === "0.0.0.0/0");
   const head =
-    "Codes: L - local, C - connected, S - static, O - OSPF, B - BGP, IA - OSPF inter area\n       E2 - OSPF external type 2, * - candidate default\n\nGateway of last resort is " +
+    "Codes: L - local, C - connected, S - static, O - OSPF, B - BGP, D - EIGRP, EX - EIGRP external\n       IA - OSPF inter area, E2 - OSPF external type 2, * - candidate default\n\nGateway of last resort is " +
     (gw?.via ? `${gw.via} to network 0.0.0.0` : "not set") +
     "\n";
   if (!routes.length) return head + "\n(empty: no interfaces are up)";
-  const order: Record<string, number> = { S: 0, B: 1, "O*E2": 2, O: 3, "O IA": 4, C: 5, L: 6 };
+  const order: Record<string, number> = { S: 0, B: 1, D: 2, "D EX": 3, "O*E2": 4, O: 5, "O IA": 6, C: 7, L: 8 };
   const lines = routes
     .slice()
     .sort((a, b) => a.cidr.net - b.cidr.net || a.cidr.len - b.cidr.len || order[a.code] - order[b.code])
     .map((r) => {
       const code = r.code === "S" && r.prefix === "0.0.0.0/0" ? "S*" : r.code;
-      const ad = r.code === "S" ? " [1/0]" : r.code === "B" ? ` [${r.ad}/${r.metric ?? 0}]` : r.code.startsWith("O") && r.iface !== "Null0" ? ` [110/${r.metric}]` : "";
+      const ad = r.code === "S" ? " [1/0]" : r.code === "B" || r.code.startsWith("D") ? ` [${r.ad}/${r.metric ?? 0}]` : r.code.startsWith("O") && r.iface !== "Null0" ? ` [110/${r.metric}]` : "";
       const tail =
         r.iface === "Null0"
           ? " is a summary, 00:01:12, Null0"
           : r.code === "B"
             ? ` via ${r.nh}, 00:02:41`
             : r.via
-              ? ` via ${r.via}${r.code.startsWith("O") ? `, 00:01:12, ${r.iface}` : ""}`
+              ? ` via ${r.via}${r.code.startsWith("O") || r.code.startsWith("D") ? `, 00:01:12, ${r.iface}` : ""}`
               : ` is directly connected, ${r.iface}`;
       return `${pad(code, 9)}${r.prefix}${ad}${tail}`;
     });
@@ -160,6 +162,17 @@ export function showAcls(net: Net, dev: string): string {
 const LONG: Record<string, string> = { Gi: "GigabitEthernet", Fa: "FastEthernet", Te: "TenGigabitEthernet", Po: "Port-channel", Lo: "Loopback" };
 
 /** "Gi0/1" → "GigabitEthernet0/1". */
+/** Ports in display order: each subinterface right after its parent. */
+function byParent<T extends { name: string }>(ports: T[]): T[] {
+  const subs = ports.filter((p) => parentOf(p.name));
+  const out: T[] = [];
+  for (const p of ports) {
+    if (parentOf(p.name)) continue;
+    out.push(p, ...subs.filter((s) => parentOf(s.name) === p.name).sort((a, b) => +a.name.split(".")[1] - +b.name.split(".")[1]));
+  }
+  return out;
+}
+
 export function longIf(name: string): string {
   const m = name.match(/^([A-Za-z]+)(.*)$/);
   return m && LONG[m[1]] ? LONG[m[1]] + m[2] : name;
@@ -191,9 +204,10 @@ export function showRun(net: Net, dev: string): string {
   }
   if (d.kind === "switch" && d.gateway) L.push(`ip default-gateway ${d.gateway}`, "!");
   const pos = (d.portChannels ?? []).map((x) => x.name);
-  for (const p of d.ports.filter((x) => !pos.includes(x.name))) {
+  for (const p of byParent(d.ports.filter((x) => !pos.includes(x.name)))) {
     L.push(`interface ${longIf(p.name)}`);
     if (p.description) L.push(` description ${p.description}`);
+    if (p.encap) L.push(` encapsulation dot1Q ${p.encap.vlan}${p.encap.native ? " native" : ""}`);
     const mode = net.portMode(d, p);
     if (net.isSwitch(d)) {
       if (mode === "routed") L.push(" no switchport");
@@ -251,6 +265,38 @@ export function showRun(net: Net, dev: string): string {
           : `ip nat inside source list ${r.acl} ${r.iface ? `interface ${longIf(r.iface)}` : `pool ${r.pool}`}${r.overload ? " overload" : ""}`,
       );
     L.push("!");
+  }
+  for (const [n, t] of Object.entries(d.tracks ?? {})) L.push(`track ${n} interface ${longIf(t.iface)} line-protocol`, "!");
+  if (d.eigrp) {
+    const e = d.eigrp;
+    const net4 = (x: { ip: string; wildcard?: string }) => ` network ${x.ip}${x.wildcard ? ` ${x.wildcard}` : ""}`;
+    if (e.name) {
+      L.push(`router eigrp ${e.name}`, " !", ` address-family ipv4 unicast autonomous-system ${e.asn}`, " !");
+      if (e.passiveDefault || e.noPassive?.length || e.passive?.length) {
+        if (e.passiveDefault) L.push("  af-interface default", "   passive-interface", "  exit-af-interface", "  !");
+        for (const x of e.noPassive ?? []) L.push(`  af-interface ${longIf(x)}`, "   no passive-interface", "  exit-af-interface", "  !");
+        for (const x of e.passive ?? []) L.push(`  af-interface ${longIf(x)}`, "   passive-interface", "  exit-af-interface", "  !");
+      }
+      if (e.variance || e.redistribute?.length) {
+        L.push("  topology base");
+        if (e.variance) L.push(`   variance ${e.variance}`);
+        for (const r of e.redistribute ?? []) L.push(`   redistribute ${r}`);
+        L.push("  exit-af-topology");
+      }
+      for (const x of e.networks) L.push(" " + net4(x));
+      if (e.routerId) L.push(`  eigrp router-id ${e.routerId}`);
+      L.push(" exit-address-family", "!");
+    } else {
+      L.push(`router eigrp ${e.asn}`);
+      for (const x of e.networks) L.push(net4(x));
+      if (e.passiveDefault) L.push(" passive-interface default");
+      for (const x of e.passive ?? []) L.push(` passive-interface ${longIf(x)}`);
+      for (const x of e.noPassive ?? []) L.push(` no passive-interface ${longIf(x)}`);
+      if (e.variance) L.push(` variance ${e.variance}`);
+      for (const r of e.redistribute ?? []) L.push(` redistribute ${r}`);
+      if (e.routerId) L.push(` eigrp router-id ${e.routerId}`);
+      L.push("!");
+    }
   }
   if (d.ospf) {
     const o = d.ospf;
@@ -494,8 +540,20 @@ export function showEtherchannel(net: Net, dev: string): string {
   return rows.join("\n");
 }
 
-function ifServiceLines(p: { nat?: "inside" | "outside"; helpers?: string[] }): string[] {
+function ifServiceLines(p: { nat?: "inside" | "outside"; helpers?: string[]; bandwidth?: number; delay?: number; fhrp?: FhrpGroup[]; hsrpVersion?: 2 }): string[] {
   const out: string[] = [];
+  if (p.bandwidth) out.push(` bandwidth ${p.bandwidth}`);
+  if (p.delay) out.push(` delay ${p.delay}`);
+  const hsrp = (p.fhrp ?? []).filter((g) => g.proto === "hsrp");
+  if (p.hsrpVersion === 2 || hsrp.some((g) => g.version === 2)) out.push(" standby version 2");
+  for (const g of p.fhrp ?? []) {
+    const k = g.proto === "hsrp" ? "standby" : "vrrp";
+    if (g.ip) out.push(` ${k} ${g.group} ip ${g.ip}`);
+    if (g.priority !== undefined && g.priority !== 100) out.push(` ${k} ${g.group} priority ${g.priority}`);
+    if (g.proto === "hsrp" && g.preempt) out.push(` standby ${g.group} preempt`);
+    if (g.proto === "vrrp" && g.preempt === false) out.push(` no vrrp ${g.group} preempt`);
+    for (const t of g.track ?? []) out.push(` ${k} ${g.group} track ${t.object ?? t.iface} decrement ${t.decrement}`);
+  }
   for (const h of p.helpers ?? []) out.push(` ip helper-address ${h}`);
   if (p.nat) out.push(` ip nat ${p.nat}`);
   return out;
@@ -669,4 +727,103 @@ export function showBgpNeighbors(net: Net, dev: string, only?: string): string {
     L.push("");
   }
   return L.join("\n") || "(no neighbors configured)";
+}
+
+// --- EIGRP -------------------------------------------------------------------------
+
+export function showEigrpNeighbors(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.eigrp) return "% EIGRP is not running";
+  const e = net.eigrp();
+  const rows = e.nbrs.filter((n) => n.dev === dev);
+  const head = d.eigrp.name ? `EIGRP-IPv4 VR(${d.eigrp.name}) Address-Family Neighbors for AS(${d.eigrp.asn})` : `EIGRP-IPv4 Neighbors for AS(${d.eigrp.asn})`;
+  const L = [head, "H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  Seq", "                                                   (sec)         (ms)       Cnt Num"];
+  rows.forEach((n, i) => L.push(`${pad(String(i), 4)}${pad(n.peerIp, 24)}${pad(n.iface, 23)}${pad("12", 5)}00:04:${String(10 + i * 7).padStart(2, "0")}    1   100  0  ${12 + i}`));
+  for (const p of e.problems.filter((x) => x.dev === dev)) L.push("", p.text);
+  return L.join("\n");
+}
+
+export function showEigrpTopology(net: Net, dev: string, all = false): string {
+  const d = net.device(dev);
+  if (!d.eigrp) return "% EIGRP is not running";
+  const e = net.eigrp();
+  const L = [
+    `EIGRP-IPv4 Topology Table for AS(${d.eigrp.asn})/ID(${e.rid.get(dev)})`,
+    "Codes: P - Passive, A - Active, U - Update, Q - Query, R - Reply,",
+    "       r - reply Status, s - sia Status",
+    "",
+  ];
+  for (const t of e.topo.get(dev) ?? []) {
+    if (t.connected) {
+      L.push(`P ${t.prefix}, 1 successors, FD is ${t.fd}`, `        via ${t.connected === "Redistributed" ? "Rstatic" : "Connected"}, ${t.connected}`);
+      continue;
+    }
+    const shown = all ? t.paths : [...t.successors, ...t.feasible];
+    L.push(`P ${t.prefix}, ${t.successors.length} successors, FD is ${t.fd}${t.installed.length > t.successors.length ? `, ${t.installed.length - t.successors.length} more installed by variance` : ""}`);
+    for (const p of shown) L.push(`        via ${p.nbrIp} (${p.fd}/${p.rd}), ${p.iface}${t.successors.includes(p) ? "" : p.rd < t.fd ? "   <- feasible successor (RD < FD)" : "   (not feasible: RD ≥ FD)"}`);
+  }
+  L.push("", "(fd/rd) = metric through that neighbour / the neighbour's own reported distance.");
+  return L.join("\n");
+}
+
+export function showEigrpInterfaces(net: Net, dev: string): string {
+  const d = net.device(dev);
+  if (!d.eigrp) return "% EIGRP is not running";
+  const e = net.eigrp();
+  const L = [`EIGRP-IPv4 Interfaces for AS(${d.eigrp.asn})`, "Interface              Peers  BW (Kbit)  Delay (usec)  Passive"];
+  for (const i of e.enabled.get(dev) ?? []) {
+    const peers = e.nbrs.filter((n) => n.dev === dev && n.iface === i.iface).length;
+    L.push(`${pad(i.iface, 23)}${pad(String(peers), 7)}${pad(String(i.bw), 11)}${pad(String(i.delayUs), 14)}${i.passive ? "yes" : "no"}`);
+  }
+  return L.join("\n");
+}
+
+// --- HSRP / VRRP --------------------------------------------------------------------
+
+export function showFhrpBrief(net: Net, dev: string, proto: "hsrp" | "vrrp"): string {
+  const groups = net.fhrp().groups.filter((g) => g.proto === proto && g.members.some((m) => m.dev === dev));
+  const d = net.device(dev);
+  // Groups configured but not yet formed (interface down) still show, in Init.
+  const L =
+    proto === "hsrp"
+      ? ["                     P indicates configured to preempt.", "                     |", "Interface   Grp  Pri P State   Active          Standby         Virtual IP"]
+      : ["  Interface          Grp Pri Time  Own Pre State   Master addr     Group addr"];
+  const shownIfs = new Set<string>();
+  for (const g of groups) {
+    const me = g.members.find((m) => m.dev === dev)!;
+    shownIfs.add(`${me.iface}|${g.group}`);
+    const state = !g.vip ? "Init" : g.active === me ? (proto === "hsrp" ? "Active" : "Master") : g.standby === me && proto === "hsrp" ? "Standby" : proto === "hsrp" ? "Listen" : "Backup";
+    const other = (m?: typeof me) => (!m ? "unknown" : m === me ? "local" : m.ip);
+    if (proto === "hsrp")
+      L.push(`${pad(me.iface, 12)}${pad(String(g.group), 5)}${pad(String(me.prio), 4)}${me.preempt ? "P" : " "} ${pad(state, 8)}${pad(other(g.active), 16)}${pad(other(g.standby), 16)}${g.vip ?? "unknown"}`);
+    else L.push(`  ${pad(me.iface, 19)}${pad(String(g.group), 4)}${pad(String(me.prio), 4)}3609  ${me.prio === 255 ? "Y" : " "}   ${me.preempt ? "Y" : " "}   ${pad(state, 8)}${pad(g.active?.ip ?? "unknown", 16)}${g.vip ?? ""}`);
+  }
+  for (const p of [...d.ports, ...(d.svis ?? []).map((s) => ({ ...s, name: `Vlan${s.vlan}` }))])
+    for (const g of (p.fhrp ?? []).filter((x) => x.proto === proto)) {
+      if (shownIfs.has(`${p.name}|${g.group}`)) continue;
+      L.push(proto === "hsrp" ? `${pad(p.name, 12)}${pad(String(g.group), 5)}${pad(String(g.priority ?? 100), 4)}${g.preempt ? "P" : " "} Init    unknown         unknown         ${g.ip ?? "unknown"}` : `  ${pad(p.name, 19)}${pad(String(g.group), 4)}${pad(String(g.priority ?? 100), 4)}3609        Init    unknown         ${g.ip ?? ""}`);
+    }
+  return L.join("\n");
+}
+
+export function showStandby(net: Net, dev: string): string {
+  const L: string[] = [];
+  for (const g of net.fhrp().groups.filter((x) => x.proto === "hsrp" && x.members.some((m) => m.dev === dev))) {
+    const me = g.members.find((m) => m.dev === dev)!;
+    const state = !g.vip ? "Init" : g.active === me ? "Active" : g.standby === me ? "Standby" : "Listen";
+    L.push(
+      `${me.iface} - Group ${g.group}${g.version === 2 ? " (version 2)" : ""}`,
+      `  State is ${state}`,
+      `  Virtual IP address is ${g.vip ?? "unknown"}`,
+      `  Active virtual MAC address is ${g.vmac}`,
+      `  Hello time 3 sec, hold time 10 sec`,
+      `  Preemption ${me.preempt ? "enabled" : "disabled"}`,
+      `  Active router is ${!g.active ? "unknown" : g.active === me ? "local" : `${g.active.ip}, priority ${g.active.prio}`}`,
+      `  Standby router is ${!g.standby ? "unknown" : g.standby === me ? "local" : `${g.standby.ip}, priority ${g.standby.prio}`}`,
+      `  Priority ${me.prio} (configured ${me.basePrio})`,
+      ...me.tracked.map((t) => `    Track ${t}`),
+      "",
+    );
+  }
+  return L.length ? L.join("\n") : "% HSRP is not configured";
 }

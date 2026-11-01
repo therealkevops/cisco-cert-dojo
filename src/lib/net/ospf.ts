@@ -108,11 +108,17 @@ export function segmentOf(net: Net, start: L3If): L3If[] {
     if (!peer || !net.linkUp(start.dev, start.name)) return [...found.values()];
     const pd = net.device(peer[0]);
     const pp = net.port(peer[0], peer[1])!;
+    const me = net.port(start.dev, start.name);
+    // A subinterface sends tagged frames (unless it is the native VLAN); a plain router port sends untagged.
+    const tag = me?.encap && !me.encap.native ? me.encap.vlan : undefined;
     if (net.isSwitch(pd) && net.portMode(pd, pp) !== "routed") {
-      // A router port into a switch is untagged: it joins the port's access VLAN (or the native VLAN of a trunk).
-      const vlan = net.portMode(pd, pp) === "access" ? (pp.vlan ?? 1) : (pp.native ?? 1);
-      if (net.carries(pd, pp, vlan) && net.forwarding(pd.id, pp.name, vlan)) queue.push([pd.id, vlan]);
-    } else add(peer[0], peer[1]);
+      const mode = net.portMode(pd, pp);
+      const vlan = mode === "access" ? (tag === undefined ? (pp.vlan ?? 1) : null) : (tag ?? pp.native ?? 1);
+      if (vlan !== null && net.carries(pd, pp, vlan) && net.forwarding(pd.id, pp.name, vlan)) queue.push([pd.id, vlan]);
+    } else {
+      const rx = net.rxIfName(peer[0], peer[1], tag);
+      if (rx) add(peer[0], rx);
+    }
   }
   while (queue.length) {
     const [sw, vlan] = queue.shift()!;
@@ -129,7 +135,8 @@ export function segmentOf(net: Net, start: L3If): L3If[] {
         if (net.carries(pd, pp, vlan) && net.forwarding(pd.id, pp.name, vlan)) queue.push([pd.id, vlan]);
       } else {
         const tagged = net.portMode(d, p) === "trunk" && vlan !== (p.native ?? 1);
-        if (!tagged) add(peer[0], peer[1]);
+        const rx = net.rxIfName(peer[0], peer[1], tagged ? vlan : undefined);
+        if (rx) add(peer[0], rx);
       }
     }
   }

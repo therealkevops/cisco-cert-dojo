@@ -28,7 +28,7 @@ export function WireList() {
             <b>challenges</b> {challenges.filter((c) => p.wire[c.id]).length}/{challenges.length} solved
           </span>
           <span>
-            <b>models</b> VLANs · 802.1Q · RSTP · EtherChannel · ARP · static routes · OSPF · eBGP · ACLs · NAT/PAT · DHCP · ICMP · IOS-style CLI
+            <b>models</b> VLANs · 802.1Q · RSTP · EtherChannel · subinterfaces · ARP · static routes · EIGRP · OSPF · eBGP · HSRP/VRRP · ACLs · NAT/PAT · DHCP · ICMP · IOS-style CLI
           </span>
         </div>
       </section>

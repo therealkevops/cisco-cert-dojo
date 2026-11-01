@@ -363,7 +363,7 @@ export function Bench({ scenario }: { scenario?: Scenario }) {
 
   const verify = () => {
     if (!challenge) return;
-    const g = gradeGoals(topo, challenge.goals);
+    const g = gradeGoals(topo, challenge.goals, net);
     setGrades(g);
     if (g.every((x) => x.ok)) recordWire(challenge.id);
   };
@@ -1002,7 +1002,7 @@ function PortPicker(props: {
   onClose: () => void;
 }) {
   const { dev, topo, q } = props;
-  const ports = dev.ports.filter((p) => !/^Lo\d+$/.test(p.name)).filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase().replace(/^g(i(g(a(b(i(t(e(t(h(e(r(n(e(t)?)?)?)?)?)?)?)?)?)?)?)?)?)?/, "gi")));
+  const ports = dev.ports.filter((p) => !/^Lo\d+$/.test(p.name) && !p.name.includes(".")).filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase().replace(/^g(i(g(a(b(i(t(e(t(h(e(r(n(e(t)?)?)?)?)?)?)?)?)?)?)?)?)?)?/, "gi")));
   const groups = new Map<string, typeof ports>();
   for (const p of ports) {
     const g = p.name.startsWith("Gi") ? "GigabitEthernet" : p.name.startsWith("eth") ? "Ethernet" : "Ports";
@@ -1088,7 +1088,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           </tbody>
         </table>
         <p className="silk" style={{ marginTop: 10 }}>
-          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, static routing, OSPFv2 (multi-area), BGP (eBGP/iBGP, best-path, route-maps, prefix-lists), ACLs, NAT/PAT, DHCP server and relay, ICMP, output filters (| include, | section). Not yet: EIGRP, subinterfaces, TCP/UDP application traffic.
+          Simulated: VLANs, trunks, RSTP, EtherChannel (LACP/PAgP/on), ARP, 802.1Q subinterfaces (router-on-a-stick), static routing, EIGRP (classic and named mode, DUAL feasible successors, variance), OSPFv2 (multi-area), BGP (eBGP/iBGP, best-path, route-maps, prefix-lists), HSRP and VRRP (priority, preempt, tracking), ACLs, NAT/PAT, DHCP server and relay, ICMP, output filters (| include, | section). Not yet: IPv6, VRFs, TCP/UDP application traffic.
         </p>
       </div>
     </div>

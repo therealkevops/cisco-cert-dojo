@@ -111,6 +111,16 @@ const fixes = {
     r1.routeMaps = { PREPEND: [{ seq: 10, action: "permit", setPrepend: [65001, 65001] }] };
     r1.bgp.neighbors[0].routeMapOut = "PREPEND";
   },
+  "roas-encap": (t) => (t.devices.find((d) => d.id === "R1").ports.find((p) => p.name === "Gi0/0.20").encap = { vlan: 20 }),
+  "roas-trunk": (t) => Object.assign(t.devices.find((d) => d.id === "SW1").ports.find((p) => p.name === "Gi1/0/24"), { mode: "trunk" }),
+  "hsrp-track": (t) => {
+    t.devices.find((d) => d.id === "R1").ports[0].fhrp[0].track = [{ iface: "Gi0/1", decrement: 20 }];
+    t.devices.find((d) => d.id === "R2").ports[0].fhrp[0].preempt = true;
+  },
+  "hsrp-vip": (t) => (t.devices.find((d) => d.id === "R2").ports[0].fhrp[0].ip = "10.1.1.1"),
+  "eigrp-as": (t) => (t.devices.find((d) => d.id === "R3").eigrp.asn = 100),
+  "eigrp-passive": (t) => (t.devices.find((d) => d.id === "R2").eigrp.noPassive = ["Gi0/0", "Gi0/1"]),
+  "eigrp-metric": (t) => (t.devices.find((d) => d.id === "R1").ports.find((p) => p.name === "Gi0/2").delay = 100),
 };
 for (const sc of scenarios) {
   if (sc.kind !== "challenge") continue;
@@ -123,7 +133,7 @@ for (const sc of scenarios) {
   }
   const t = structuredClone(sc.topology);
   fix(t);
-  const after = gradeGoals(t, sc.goals);
+  const after = gradeGoals(t, sc.goals, new Net(sc.topology));
   for (const g of after) if (!g.ok) fail(`wire ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
 }
 // The same challenges solved the way a learner would: typing into the consoles.
@@ -159,6 +169,16 @@ const cliFixes = {
   "bgp-network": [["R1", "en", "conf t", "router bgp 65001", "no network 203.0.0.0 mask 255.255.0.0", "network 203.0.113.0 mask 255.255.255.0", "end"]],
   "bgp-outbound": [["R1", "en", "conf t", "route-map PREFER-B permit 10", "set local-preference 200", "exit", "router bgp 65001", "address-family ipv4", "neighbor 192.0.2.6 route-map PREFER-B in", "end"]],
   "bgp-inbound": [["R1", "en", "conf t", "route-map PREPEND permit 10", "set as-path prepend 65001 65001", "exit", "router bgp 65001", "neighbor 192.0.2.2 route-map PREPEND out", "end"]],
+  "roas-encap": [["R1", "en", "conf t", "interface gi0/0.20", "encapsulation dot1q 20", "end"]],
+  "roas-trunk": [["SW1", "en", "conf t", "interface gi1/0/24", "switchport mode trunk", "end"]],
+  "hsrp-track": [
+    ["R1", "en", "conf t", "interface gi0/0", "standby 10 track gi0/1 decrement 20", "end"],
+    ["R2", "en", "conf t", "interface gi0/0", "standby 10 preempt", "end"],
+  ],
+  "hsrp-vip": [["R2", "en", "conf t", "interface gi0/0", "standby 10 ip 10.1.1.1", "end"]],
+  "eigrp-as": [["R3", "en", "conf t", "no router eigrp 101", "router eigrp 100", "network 10.0.0.0", "network 192.168.0.0 0.0.255.255", "end"]],
+  "eigrp-passive": [["R2", "en", "conf t", "router eigrp 100", "no passive-interface gi0/0", "no passive-interface gi0/1", "end"]],
+  "eigrp-metric": [["R1", "en", "conf t", "interface gi0/2", "delay 100", "end"]],
 };
 // BGP example: all sessions up, both paths present, end-to-end reachability.
 {
@@ -220,7 +240,7 @@ for (const sc of scenarios) {
       if (r.topo) ((topo = r.topo), (net = new Net(topo, net)));
     }
   }
-  for (const g of gradeGoals(topo, sc.goals)) if (!g.ok) fail(`wire ${sc.id}: CLI fix fails "${g.goal.label}" (${g.detail})`);
+  for (const g of gradeGoals(topo, sc.goals, net)) if (!g.ok) fail(`wire ${sc.id}: CLI fix fails "${g.goal.label}" (${g.detail})`);
 }
 console.log(`wire   ${scenarios.length} scenarios (data + CLI fixes)`);
 // Fabric Lab: each challenge must fail as shipped and pass with its reference fix.

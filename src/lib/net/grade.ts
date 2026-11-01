@@ -9,10 +9,21 @@ const WARM = 8;
 export type GoalResult = { goal: Goal; ok: boolean; detail: string };
 
 /** Outcome-based grading: any configuration that produces the right behaviour passes. */
-export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
+export function gradeGoals(topo: Topology, goals: Goal[], history?: Net): GoalResult[] {
   return goals.map((goal) => {
     // Fresh network per goal, so one probe's ARP and MAC learning can't help another.
+    // Only FHRP history carries over: who is active depends on preemption, not just priority.
     const net = new Net(topo);
+    if (history) net.withFhrpHistory(history);
+    if (goal.type === "fhrpActive") {
+      const g = net.fhrp().groups.find((x) => x.group === goal.group && x.members.some((m) => m.dev === goal.device));
+      const who = g?.active?.dev;
+      return { goal, ok: who === goal.device, detail: !g ? `${goal.device} isn't in group ${goal.group}` : who ? `${who} is active for group ${goal.group}` : `group ${goal.group} has no active router` };
+    }
+    if (goal.type === "eigrpNbr") {
+      const ok = net.eigrp().nbrs.some((n) => n.dev === goal.device && n.peerDev === goal.neighbor);
+      return { goal, ok, detail: ok ? `${goal.device} and ${goal.neighbor} are EIGRP neighbours` : `${goal.device} has no EIGRP neighbour ${goal.neighbor}` };
+    }
     if (goal.type === "stpRoot") {
       const root = net.stp(goal.vlan).rootOf[goal.device];
       return { goal, ok: root === goal.device, detail: root ? `root for VLAN ${goal.vlan} is ${root}` : `no STP instance for VLAN ${goal.vlan} on ${goal.device}` };
@@ -32,7 +43,12 @@ export function gradeGoals(topo: Topology, goals: Goal[]): GoalResult[] {
     }
     if (goal.type === "route") {
       const r = net.routes(goal.device).find((x) => x.prefix === goal.prefix && (!goal.code || x.code === goal.code));
-      return { goal, ok: !!r === goal.expect, detail: r ? `${goal.device} has ${r.code} ${r.prefix}` : `${goal.device} has no ${goal.code ?? ""} route for ${goal.prefix}`.replace("  ", " ") };
+      const viaOk = !goal.via || r?.via === goal.via;
+      return {
+        goal,
+        ok: (!!r && viaOk) === goal.expect,
+        detail: r ? `${goal.device} has ${r.code} ${r.prefix}${r.via ? ` via ${r.via}` : ""}` : `${goal.device} has no ${goal.code ?? ""} route for ${goal.prefix}`.replace("  ", " "),
+      };
     }
     if (goal.type === "reachAll") {
       for (const [from, to] of goal.pairs) net.ping(from, to, WARM);
