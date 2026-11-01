@@ -20,7 +20,7 @@ export function SizingSheet({ ex }: { ex: SizingExercise }) {
   const [st, setSt] = useState<StepState[]>(() => fresh(ex.steps));
   const done = st.every((s) => s.ok || s.reveal);
   const clean = st.every((s) => s.ok);
-  const same = worksheets.filter((e) => (e.area ?? "sizing") === (ex.area ?? "sizing"));
+  const same = worksheets.filter((e) => (e.area ?? "sizing") === (ex.area ?? "sizing") && e.exam === ex.exam);
   const next = same[same.findIndex((e) => e.id === ex.id) + 1];
   const numeric = ex.steps.some((s) => !s.kind || s.kind === "number");
 

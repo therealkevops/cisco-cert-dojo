@@ -302,7 +302,7 @@ for (const e of worksheets) {
     if (!shownAnswer(st)) fail(`${where}: nothing to reveal`);
   });
 }
-console.log(`sheets ${worksheets.length} worksheets (${worksheets.filter((w) => w.area === "desk").length} ENCOR desk)`);
+console.log(`sheets ${worksheets.length} worksheets (${worksheets.filter((w) => w.area === "desk").length} on the Design & Automation Desk)`);
 
 // Every hands-on item must land on a real blueprint objective, or it would silently never count toward mastery.
 for (const x of practicals) {

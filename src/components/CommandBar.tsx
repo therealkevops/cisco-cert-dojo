@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { examList } from "@/data/catalog";
 import { labs } from "@/data/labs";
 import { fabricScenarios } from "@/data/fabric";
-import { deskExercises } from "@/data/desk";
+import { deskSheets as deskExercises } from "@/data/worksheets";
 import { sizingExercises } from "@/data/sizing";
 import { scenarios } from "@/data/wire";
 

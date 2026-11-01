@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { SizingSheet } from "@/components/sizing/SizingSheet";
-import { deskExercises } from "@/data/desk";
+import { deskSheets as deskExercises } from "@/data/worksheets";
 
 export function generateStaticParams() {
   return deskExercises.map((e) => ({ id: e.id }));
