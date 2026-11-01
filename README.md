@@ -35,7 +35,10 @@ npm install
 npm run dev        # http://localhost:3000
 npm run validate   # content lint: references, answers, and a dry run of every lab
 npm run build
+npm run test:e2e   # Playwright end-to-end tests against the production build
 ```
+
+`npm run test:e2e` starts `next start` on port 3123 (or reuses a server already running there), so run `npm run build` first. CI (`.github/workflows/ci.yml`) runs the typecheck, content validation, build and end-to-end tests on every push and pull request.
 
 ## Deploy to Vercel
 
