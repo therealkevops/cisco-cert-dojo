@@ -45,3 +45,27 @@ test("a config drill can be completed by typing the commands", async ({ page }) 
   await expect(page.locator(".steps li.cur")).toHaveCount(0);
   await noErrors(errs);
 });
+
+test("an NX-OS upgrade drill accepts show commands as steps", async ({ page }) => {
+  const errs = watchErrors(page);
+  await page.goto("/labs/nxos-upgrade");
+  const input = page.locator(".term-line input");
+  for (const l of [
+    "dir bootflash:",
+    "show install all impact nxos bootflash:nxos64-cs.10.4.3.F.bin",
+    "install all nxos bootflash:nxos64-cs.10.4.3.F.bin",
+    "show install epld bootflash:n9000-epld.10.4.3.F.img module all",
+    "install epld bootflash:n9000-epld.10.4.3.F.img module all",
+  ]) {
+    await input.fill(l);
+    await input.press("Enter");
+  }
+  await expect(page.locator(".term-out")).toContainText("Ticket complete");
+  await noErrors(errs);
+});
+
+test("the rack shows CCNP Data Center with DCCOR and DCAI", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "CCNP Data Center" })).toBeVisible();
+  await expect(page.locator("main")).toContainText("DCCOR");
+});

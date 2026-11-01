@@ -6,6 +6,7 @@ import { useProgress } from "@/lib/progress";
 
 const EXAMS = [
   { id: "encor", name: "ENCOR 350-401" },
+  { id: "dccor", name: "DCCOR 350-601" },
   { id: "dcai", name: "DCAI 300-640" },
 ] as const;
 
@@ -15,14 +16,15 @@ export function DeskList() {
     <main className="page">
       <section className="hero">
         <div>
-          <span className="silk">Design & Automation Desk · ENCOR and DCAI</span>
+          <span className="silk">Design & Automation Desk · ENCOR, DCCOR and DCAI</span>
           <h1 className="display">
             Read it, write it, <em>call it.</em>
           </h1>
           <p className="lede">
             Worksheets for the topics that aren&apos;t about typing device config. For ENCOR: write JSON an API will accept, turn a YANG tree into
             RESTCONF calls, walk through Catalyst Center and SD-WAN Manager API sessions, predict what Python prints, and do the availability, QoS
-            and overlay maths. For DCAI: read benchmark results, correlate monitoring data, pick the right controller, classify workloads, and work
+            and overlay maths. For DCCOR: wire up ACI access policies, follow a packet across VXLAN, design UCS pools and templates, and
+            pick storage protocols and automation tools. For DCAI: read benchmark results, correlate monitoring data, pick the right controller, classify workloads, and work
             out cloud vs on-prem economics. Each answer is checked as you go.
           </p>
         </div>

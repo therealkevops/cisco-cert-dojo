@@ -40,7 +40,7 @@ export type SizingStep = NumberStep | TextStep | JsonStep | ChoiceStep;
 
 export type SizingExercise = {
   id: string;
-  exam: "dcai" | "encor";
+  exam: "dcai" | "encor" | "dccor";
   /** Sizing Desk (DCAI) or Design & Automation Desk (ENCOR). */
   area?: "sizing" | "desk";
   objective: string;

@@ -83,7 +83,9 @@ export function runLine(lab: Lab, st: TermState, raw: string): { state: TermStat
     return { state: st, lines };
   }
 
-  if (matchCommand("sh|ow <rest>", body)) {
+  // A show command that is itself the next step of the ticket (upgrade checks, previews) counts as the step.
+  const isStepNow = !st.done && matchAny(lab.steps[st.step].accept, body);
+  if (matchCommand("sh|ow <rest>", body) && !isStepNow) {
     const show = lab.shows.find((s) => matchCommand(s.match, body));
     if (!show) lines.push({ kind: "err", text: "% This show command is not simulated in this lab." });
     else if (!st.done) lines.push({ kind: "coach", text: "Finish the ticket first. The output reflects the finished configuration." });
@@ -106,7 +108,9 @@ export function runLine(lab: Lab, st: TermState, raw: string): { state: TermStat
       return { state: { ...st, slips: st.slips + 1 }, lines };
     }
     const nav = isEnable(step.cmd) || isConfT(step.cmd) || isExit(step.cmd) || isEnd(step.cmd) || step.cmd.startsWith("exit-");
-    const config = nav ? st.config : [...st.config, { depth: Math.max(0, st.mode.stack.length - 1), text: step.cmd }];
+    // Exec-mode steps (show, install, copy, rollback...) are actions, not configuration lines.
+    const execStep = want.stack.length === 0;
+    const config = nav || execStep ? st.config : [...st.config, { depth: Math.max(0, st.mode.stack.length - 1), text: step.cmd }];
     const mode = applyStep(st.mode, step);
     if (step.output) lines.push({ kind: "out", text: step.output });
     const next = st.step + 1;

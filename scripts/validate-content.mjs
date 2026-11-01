@@ -8,7 +8,7 @@ import { matchAny } from "../src/lib/cli-pattern.ts";
 import { initialState, runLine } from "../src/lib/terminal.ts";
 import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
-import { practicals } from "../src/data/practice.ts";
+import { allPracticals as practicals } from "../src/data/practice.ts";
 import { fabricScenarios } from "../src/data/fabric.ts";
 import { ucsScenarios } from "../src/data/ucs.ts";
 import { gradeUcs } from "../src/lib/ucs.ts";

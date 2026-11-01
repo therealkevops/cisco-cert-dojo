@@ -16,8 +16,10 @@ export function RackView() {
   const planned = tracks.filter((t) => t.status === "planned");
   const answered = Object.keys(p.cards).length;
   const labsDone = Object.keys(p.labs).length;
-  const wireDone = practicals.filter((x) => x.kind !== "lab" && practicalDone(p, x)).length;
-  const wireTotal = practicals.filter((x) => x.kind !== "lab").length;
+  // Count each hands-on item once, even if it is listed under several objectives.
+  const unique = [...new Map(practicals.filter((x) => x.kind !== "lab").map((x) => [`${x.kind}:${x.id}`, x])).values()];
+  const wireDone = unique.filter((x) => practicalDone(p, x)).length;
+  const wireTotal = unique.length;
   const lastMock = p.mocks[p.mocks.length - 1];
 
   const download = () => {

@@ -29,6 +29,31 @@ export const practicals: Practical[] = [
   ...labs.map((l) => ({ kind: "lab" as const, id: l.id, exam: l.exam, objective: l.objective, title: l.title, href: `/labs/${l.id}` })),
 ];
 
+/**
+ * Practice built for one exam that also exercises another exam's objective (same hands-on, different
+ * blueprint). Keyed by `${kind}:${id}`; each entry adds the item under that exam and objective too.
+ */
+const CROSS: Record<string, [exam: string, objective: string][]> = {
+  // Wire Room: routing and switching protocols that DCCOR expects on NX-OS.
+  ...Object.fromEntries(["ospf-area", "ospf-dr", "ospf-mtu", "ospf-passive", "ospf-summary"].map((id) => [`wire:${id}`, [["dccor", "1.1.a"]]])),
+  ...Object.fromEntries(["bgp-inbound", "bgp-network", "bgp-outbound", "bgp-remote-as"].map((id) => [`wire:${id}`, [["dccor", "1.1.b"]]])),
+  ...Object.fromEntries(["hsrp-track", "hsrp-vip"].map((id) => [`wire:${id}`, [["dccor", "1.1.d"]]])),
+  ...Object.fromEntries(["lacp-on", "lacp-passive", "po-access", "stp-root"].map((id) => [`wire:${id}`, [["dccor", "1.2"]]])),
+  // Packet-walk troubleshooting of unicast, broadcast (ARP) and flooding.
+  ...Object.fromEntries(["wrong-vlan", "pruned-trunk", "roas-trunk", "dead-gateway", "return-route"].map((id) => [`wire:${id}`, [["dccor", "1.5"]]])),
+  // DCAI labs that cover DCCOR's AI-networking and compute objectives.
+  ...Object.fromEntries(["fab-dscp", "fab-ecn", "fab-ecn-thresholds", "fab-dcqcn", "fab-mtu", "fab-hash", "fab-storm", "fab-optic"].map((id) => [`fabric:${id}`, [["dccor", "4.3"]]])),
+  ...Object.fromEntries(["ucs-roce", "ucs-fix", "ucs-power"].map((id) => [`ucs:${id}`, [["dccor", "2.3"]]])),
+  "lab:fabric-telemetry": [["dccor", "1.10"]],
+  "lab:pfc-watchdog": [["dccor", "4.3"]],
+};
+
+/** Every practical including its cross-exam listings. */
+export const allPracticals: Practical[] = [
+  ...practicals,
+  ...practicals.flatMap((x) => (CROSS[`${x.kind}:${x.id}`] ?? []).map(([exam, objective]) => ({ ...x, exam, objective }))),
+];
+
 export function practicalsFor(exam: string, objective: string): Practical[] {
-  return practicals.filter((x) => x.exam === exam && x.objective === objective);
+  return allPracticals.filter((x) => x.exam === exam && x.objective === objective);
 }
