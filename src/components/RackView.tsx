@@ -84,9 +84,8 @@ export function RackView() {
       ))}
 
       <div className="notice">
-        <b>Heads up on the pairing.</b> 300-640 DCAI is a <em>Data Center</em> concentration. ENCOR + DCAI does not add up to one CCNP: ENCOR
-        counts toward CCNP Enterprise, and DCAI earns the DCAI Specialist on its own or completes CCNP Data Center together with 350-601 DCCOR.
-        To finish CCNP Enterprise you need ENCOR plus an Enterprise concentration (ENARSI, ENSDWI, ENAUTO and others).
+        <b>How the pairing works.</b> ENCOR counts toward CCNP Enterprise, which also needs an Enterprise concentration (ENARSI, ENSDWI, ENAUTO and
+        others). DCCOR plus DCAI completes CCNP Data Center.
       </div>
 
       <div className="section-head">

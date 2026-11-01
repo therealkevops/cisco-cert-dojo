@@ -7,9 +7,10 @@ Loaded today:
 | Exam | Code | Role | Content |
 | --- | --- | --- | --- |
 | ENCOR v1.2 | 350-401 | CCNP Enterprise core | 40 objectives · 492 questions · 21 config drills · 41 Wire Room scenarios · 8 worksheets |
+| DCCOR v1.2 | 350-601 | CCNP Data Center core (and CCIE DC qualifier) | 30 objectives · 381 questions |
 | DCAI v1.0 | 300-640 | Data Center AI Infrastructure (Specialist / CCNP DC concentration) | 21 objectives · 278 questions · 7 NX-OS config drills · 8 Fabric Lab challenges · 3 UCS labs · 12 worksheets |
 
-> **Note on the pairing.** 300-640 DCAI is a *Data Center* concentration. It completes CCNP Data Center together with 350-601 DCCOR, and passing it on its own earns the DCAI Specialist. CCNP Enterprise needs ENCOR plus an *Enterprise* concentration (ENARSI, ENSDWI, ENAUTO, ...).
+> **Note on the pairing.** DCCOR + DCAI completes **CCNP Data Center** (each also earns a Specialist on its own). CCNP Enterprise needs ENCOR plus an *Enterprise* concentration (ENARSI, ENSDWI, ENAUTO, ...).
 
 ## What's inside
 
@@ -58,4 +59,4 @@ The simulator engine lives in `src/lib/net/`. It models VLANs, 802.1Q trunks, pe
 
 Run `npm run validate` after editing. It fails if a question points at a missing objective, an answer index is out of range, or a lab cannot be completed with its own canonical commands.
 
-Blueprints follow Cisco's published exam topics: [ENCOR v1.2](https://learningcontent.cisco.com/documents/marketing/exam-topics/350-401-ENCORE-v1.2.pdf) · [DCAI v1.0](https://learningcontent.cisco.com/documents/marketing/exam-topics/300-640-DCAI-v1.0_2025Nov5.pdf). This is an independent study tool, not affiliated with or endorsed by Cisco.
+Blueprints follow Cisco's published exam topics: [ENCOR v1.2](https://learningcontent.cisco.com/documents/marketing/exam-topics/350-401-ENCORE-v1.2.pdf) · [DCCOR v1.2](https://learningcontent.cisco.com/documents/marketing/exam-topics/350-601-DCCOR-v1.2.pdf) · [DCAI v1.0](https://learningcontent.cisco.com/documents/marketing/exam-topics/300-640-DCAI-v1.0_2025Nov5.pdf). This is an independent study tool, not affiliated with or endorsed by Cisco.

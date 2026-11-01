@@ -1,8 +1,9 @@
 import type { Exam, Track } from "./types";
 import { encor } from "./exams/encor";
 import { dcai } from "./exams/dcai";
+import { dccor } from "./exams/dccor";
 
-export const exams: Record<string, Exam> = { encor, dcai };
+export const exams: Record<string, Exam> = { encor, dccor, dcai };
 export const examList: Exam[] = Object.values(exams);
 
 // The rack. "racked" tracks have content; "planned" ones show as blank slots
@@ -17,11 +18,11 @@ export const tracks: Track[] = [
     status: "racked",
   },
   {
-    id: "specialist-dcai",
-    name: "Specialist: Data Center AI Infrastructure",
-    level: "Specialist",
-    exams: ["dcai"],
-    rule: "Passing 300-640 earns this Specialist certification. Together with 350-601 DCCOR it completes CCNP Data Center.",
+    id: "ccnp-datacenter",
+    name: "CCNP Data Center",
+    level: "Professional",
+    exams: ["dccor", "dcai"],
+    rule: "Pass the 350-601 DCCOR core plus one concentration, here 300-640 DCAI. Each passed exam also earns a Specialist certification, and DCCOR qualifies you for the CCIE Data Center lab.",
     status: "racked",
   },
   {
@@ -30,14 +31,6 @@ export const tracks: Track[] = [
     level: "Associate",
     exams: [],
     rule: "Single exam: 200-301.",
-    status: "planned",
-  },
-  {
-    id: "ccnp-datacenter",
-    name: "CCNP Data Center",
-    level: "Professional",
-    exams: [],
-    rule: "350-601 DCCOR core plus one concentration, for example 300-640 DCAI.",
     status: "planned",
   },
   {
