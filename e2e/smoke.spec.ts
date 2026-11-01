@@ -34,6 +34,9 @@ for (const [path, what] of pages) {
 
 test("command line opens with ':'", async ({ page }) => {
   await page.goto("/");
-  await page.keyboard.press(":");
-  await expect(page.locator(".cmdbar input")).toBeFocused();
+  // The key handler attaches after hydration, so keep pressing until the command line opens.
+  await expect(async () => {
+    await page.keyboard.press(":");
+    await expect(page.locator(".cmdbar input")).toBeFocused({ timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
 });
