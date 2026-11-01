@@ -10,6 +10,8 @@ import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
 import { practicals } from "../src/data/practice.ts";
 import { fabricScenarios } from "../src/data/fabric.ts";
+import { ucsScenarios } from "../src/data/ucs.ts";
+import { gradeUcs } from "../src/lib/ucs.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -274,6 +276,30 @@ for (const sc of fabricScenarios) {
   }
 }
 console.log(`fabric ${fabricScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+
+// UCS Profile Lab: each scenario fails as shipped and passes with its reference fix.
+const roceFix = (c) => {
+  if (!c.domain.vlans.includes(300)) c.domain.vlans.push(300);
+  if (!c.domain.ntp.length) c.domain.ntp.push("10.0.0.1");
+  Object.assign(c.domain.qos.platinum, { enabled: true, noDrop: true, mtu: 9216 });
+  let a = c.server.adapters.find((x) => x.roce);
+  if (!a) c.server.adapters.push((a = { name: "RoCE-v2", roce: true, roceVersion: 2, queuePairs: 1024, memoryRegions: 131072, resourceGroups: 8, cos: 5 }));
+  a.cos = c.domain.qos.platinum.cos;
+  Object.assign(c.server.vnics.find((v) => v.name === "eth-roce"), { qos: "platinum", mtu: 9000, adapter: a.name });
+};
+const ucsFixes = {
+  "ucs-roce": roceFix,
+  "ucs-fix": roceFix,
+  "ucs-power": (c) => Object.assign(c.server, { power: { priority: "high", restore: "last-state", redundancy: "grid" }, storage: { ...c.server.storage, m2: "raid1" } }),
+};
+for (const sc of ucsScenarios) {
+  if (gradeUcs(sc.config, sc.goals).every((g) => g.ok)) fail(`ucs ${sc.id}: already passes before any fix`);
+  const c = structuredClone(sc.config);
+  ucsFixes[sc.id]?.(c);
+  if (!ucsFixes[sc.id]) fail(`ucs ${sc.id}: no reference fix`);
+  for (const g of gradeUcs(c, sc.goals)) if (!g.ok) fail(`ucs ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+}
+console.log(`ucs    ${ucsScenarios.length} scenarios (broken as shipped, fixed by reference)`);
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();

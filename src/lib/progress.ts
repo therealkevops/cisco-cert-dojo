@@ -33,11 +33,12 @@ export type Progress = {
   wire: Record<string, { at: number }>; // solved Wire Room challenges
   fabric: Record<string, { at: number }>; // solved Fabric Lab challenges
   sizing: Record<string, { at: number }>; // completed Sizing Desk worksheets
+  ucs: Record<string, { at: number }>; // solved UCS Profile Lab scenarios
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, ucs: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -135,6 +136,12 @@ export function recordSizing(exerciseId: string) {
   save({ ...p, sizing: { ...p.sizing, [exerciseId]: { at: Date.now() } }, days: touchDay(p) });
 }
 
+export function recordUcs(id: string) {
+  const p = load();
+  if (p.ucs[id]) return;
+  save({ ...p, ucs: { ...p.ucs, [id]: { at: Date.now() } }, days: touchDay(p) });
+}
+
 export function recordMock(result: MockResult) {
   const p = load();
   save({ ...p, mocks: [...p.mocks, result].slice(-50), days: touchDay(p) });
@@ -170,6 +177,7 @@ export function practicalDone(p: Progress, x: Practical): boolean {
   if (x.kind === "wire") return !!p.wire[x.id];
   if (x.kind === "fabric") return !!p.fabric[x.id];
   if (x.kind === "sizing" || x.kind === "desk") return !!p.sizing[x.id];
+  if (x.kind === "ucs") return !!p.ucs[x.id];
   return !!p.labs[x.id];
 }
 
