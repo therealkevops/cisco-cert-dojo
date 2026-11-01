@@ -6,7 +6,7 @@ Loaded today:
 
 | Exam | Code | Role | Content |
 | --- | --- | --- | --- |
-| ENCOR v1.2 | 350-401 | CCNP Enterprise core | 40 objectives · 492 questions · 9 CLI labs · 31 Wire Room scenarios |
+| ENCOR v1.2 | 350-401 | CCNP Enterprise core | 40 objectives · 492 questions · 21 config drills · 31 Wire Room scenarios |
 | DCAI v1.0 | 300-640 | Data Center AI Infrastructure (Specialist / CCNP DC concentration) | 21 objectives · 278 questions · 7 NX-OS config drills · 8 Fabric Lab challenges · 6 sizing worksheets |
 
 > **Note on the pairing.** 300-640 DCAI is a *Data Center* concentration. It completes CCNP Data Center together with 350-601 DCCOR, and passing it on its own earns the DCAI Specialist. CCNP Enterprise needs ENCOR plus an *Enterprise* concentration (ENARSI, ENSDWI, ENAUTO, ...).

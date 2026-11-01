@@ -355,6 +355,478 @@ Operation time to live: Forever`,
       },
     ],
   },
+  // --- ENCOR drills for topics without a Wire Room challenge ---------------------------------
+  {
+    id: "sso-nsf",
+    exam: "encor",
+    objective: "1.1.b",
+    title: "Stateful switchover with NSF for OSPF",
+    hostname: "CORE1",
+    platform: "ios-xe",
+    brief: "CORE1 has two supervisors. Make the standby stateful (SSO) and let OSPF keep forwarding through a switchover with Cisco NSF.",
+    topology: `  [SUP1 active] ══ SSO sync ══ [SUP2 standby]
+          OSPF 1 neighbours keep forwarding during switchover`,
+    steps: [
+      enable,
+      conft,
+      { task: "Enter redundancy configuration.", cmd: "redundancy", accept: ["red|undancy"], enters: "config-red", hint: "redundancy" },
+      { task: "Set the mode to SSO.", cmd: "mode sso", accept: ["mode sso"], hint: "mode sso" },
+      exit,
+      { task: "Enter OSPF process 1.", cmd: "router ospf 1", accept: ["router ospf 1"], enters: "config-router", hint: "router ospf 1" },
+      { task: "Enable Cisco NSF (graceful restart) for OSPF.", cmd: "nsf", accept: ["nsf (cisco)", "nsf ietf"], hint: "nsf" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow red|undancy states",
+        output: `       my state = 13 -ACTIVE
+     peer state = 8  -STANDBY HOT
+           Mode = Duplex
+  Redundancy Mode (Operational) = sso
+  Redundancy Mode (Configured)  = sso`,
+      },
+    ],
+  },
+  {
+    id: "qos-wan",
+    exam: "encor",
+    objective: "1.4",
+    title: "Low-latency queuing for voice and video on the WAN",
+    hostname: "BR1",
+    platform: "ios-xe",
+    brief: "On the WAN link Gi0/0: voice (DSCP EF) gets a strict-priority queue of 10%, interactive video (DSCP AF41) gets 40% of the remaining bandwidth. Everything else shares the rest.",
+    topology: `  LAN ── [BR1] Gi0/0 ══ WAN (policy WAN-OUT outbound)`,
+    steps: [
+      enable,
+      conft,
+      { task: "Create class-map VOICE (match-any).", cmd: "class-map match-any VOICE", accept: ["class-m|ap (match-any) VOICE"], enters: "config-cmap", hint: "class-map match-any VOICE" },
+      { task: "Match DSCP EF.", cmd: "match dscp ef", accept: ["mat|ch dscp ef", "mat|ch dscp 46"], hint: "match dscp ef" },
+      exit,
+      { task: "Create class-map VIDEO (match-any).", cmd: "class-map match-any VIDEO", accept: ["class-m|ap (match-any) VIDEO"], enters: "config-cmap", hint: "class-map match-any VIDEO" },
+      { task: "Match DSCP AF41.", cmd: "match dscp af41", accept: ["mat|ch dscp af41", "mat|ch dscp 34"], hint: "match dscp af41" },
+      exit,
+      { task: "Create policy-map WAN-OUT.", cmd: "policy-map WAN-OUT", accept: ["policy-m|ap WAN-OUT"], enters: "config-pmap", hint: "policy-map WAN-OUT" },
+      { task: "Select class VOICE.", cmd: "class VOICE", accept: ["cla|ss VOICE"], enters: "config-pmap-c", hint: "class VOICE" },
+      { task: "Strict priority, 10% of the link.", cmd: "priority percent 10", accept: ["prio|rity per|cent 10"], hint: "priority percent 10" },
+      exit,
+      { task: "Select class VIDEO.", cmd: "class VIDEO", accept: ["cla|ss VIDEO"], enters: "config-pmap-c", hint: "class VIDEO" },
+      { task: "40% of the bandwidth left after the priority queue.", cmd: "bandwidth remaining percent 40", accept: ["band|width rem|aining per|cent 40"], hint: "bandwidth remaining percent 40" },
+      exit,
+      exit,
+      { task: "Go to the WAN interface.", cmd: "interface GigabitEthernet0/0", accept: ["int|erface <if:gi0/0>"], enters: "config-if", hint: "interface gi0/0" },
+      { task: "Apply WAN-OUT outbound.", cmd: "service-policy output WAN-OUT", accept: ["serv|ice-policy out|put WAN-OUT"], hint: "service-policy output WAN-OUT" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow policy-map int|erface <rest>",
+        output: ` GigabitEthernet0/0
+
+  Service-policy output: WAN-OUT
+
+    Class-map: VOICE (match-any)
+      Match: dscp ef (46)
+      Priority: 10% (10000 kbps), burst bytes 250000, b/w exceed drops: 0
+
+    Class-map: VIDEO (match-any)
+      Match: dscp af41 (34)
+      bandwidth remaining 40%
+
+    Class-map: class-default (match-any)
+      Match: any`,
+      },
+    ],
+  },
+  {
+    id: "gre-ipsec",
+    exam: "encor",
+    objective: "2.2.b",
+    title: "GRE over IPsec with IKEv2 to a branch",
+    hostname: "HQ",
+    platform: "ios-xe",
+    brief: "Build Tunnel0 (172.16.0.1/30) from HQ (Gi0/0) to the branch at 198.51.100.2, protected with IPsec using IKEv2 and a pre-shared key 'Br4nchKey!'. Use the IKEv2 smart defaults for proposals and transform sets.",
+    topology: `  [HQ] Gi0/0 ═══ Internet ═══ 198.51.100.2 [BR1]
+     Tunnel0 172.16.0.1/30 ─── GRE in IPsec ─── 172.16.0.2/30`,
+    steps: [
+      enable,
+      conft,
+      { task: "Create IKEv2 keyring KR.", cmd: "crypto ikev2 keyring KR", accept: ["cry|pto ikev2 keyr|ing KR"], enters: "config-ikev2-keyring", hint: "crypto ikev2 keyring KR" },
+      { task: "Add a peer entry named BR1.", cmd: "peer BR1", accept: ["peer BR1"], enters: "config-ikev2-keyring-peer", hint: "peer BR1" },
+      { task: "Peer address 198.51.100.2.", cmd: "address 198.51.100.2", accept: ["addr|ess 198.51.100.2"], hint: "address 198.51.100.2" },
+      { task: "Pre-shared key Br4nchKey!.", cmd: "pre-shared-key Br4nchKey!", accept: ["pre-s|hared-key Br4nchKey!"], hint: "pre-shared-key Br4nchKey!" },
+      exit,
+      exit,
+      { task: "Create IKEv2 profile IKEV2-PROF.", cmd: "crypto ikev2 profile IKEV2-PROF", accept: ["cry|pto ikev2 prof|ile IKEV2-PROF"], enters: "config-ikev2-profile", hint: "crypto ikev2 profile IKEV2-PROF" },
+      { task: "Match the remote peer's address.", cmd: "match identity remote address 198.51.100.2 255.255.255.255", accept: ["mat|ch iden|tity rem|ote addr|ess 198.51.100.2 (255.255.255.255)"], hint: "match identity remote address 198.51.100.2 255.255.255.255" },
+      { task: "Authenticate the remote side with the pre-shared key.", cmd: "authentication remote pre-share", accept: ["auth|entication rem|ote pre-sh|are"], hint: "authentication remote pre-share" },
+      { task: "Authenticate the local side with the pre-shared key.", cmd: "authentication local pre-share", accept: ["auth|entication loc|al pre-sh|are"], hint: "authentication local pre-share" },
+      { task: "Use keyring KR.", cmd: "keyring local KR", accept: ["keyr|ing loc|al KR"], hint: "keyring local KR" },
+      exit,
+      { task: "Create IPsec profile VPN.", cmd: "crypto ipsec profile VPN", accept: ["cry|pto ipsec prof|ile VPN"], enters: "ipsec-profile", hint: "crypto ipsec profile VPN" },
+      { task: "Use the IKEv2 profile.", cmd: "set ikev2-profile IKEV2-PROF", accept: ["set ikev2-p|rofile IKEV2-PROF"], hint: "set ikev2-profile IKEV2-PROF" },
+      exit,
+      { task: "Create Tunnel0.", cmd: "interface Tunnel0", accept: ["int|erface <if:tu0>"], enters: "config-if", hint: "interface tunnel0" },
+      { task: "Tunnel address 172.16.0.1/30.", cmd: "ip address 172.16.0.1 255.255.255.252", accept: ["ip add|ress 172.16.0.1 255.255.255.252"], hint: "ip address 172.16.0.1 255.255.255.252" },
+      { task: "Lower the tunnel IP MTU to 1400 to leave room for GRE and ESP.", cmd: "ip mtu 1400", accept: ["ip mtu 1400"], hint: "ip mtu 1400" },
+      { task: "Source the tunnel from Gi0/0.", cmd: "tunnel source GigabitEthernet0/0", accept: ["tun|nel sou|rce <if:gi0/0>"], hint: "tunnel source gi0/0" },
+      { task: "Destination 198.51.100.2.", cmd: "tunnel destination 198.51.100.2", accept: ["tun|nel dest|ination 198.51.100.2"], hint: "tunnel destination 198.51.100.2" },
+      { task: "Protect it with IPsec profile VPN.", cmd: "tunnel protection ipsec profile VPN", accept: ["tun|nel prot|ection ipsec prof|ile VPN"], hint: "tunnel protection ipsec profile VPN", output: "%CRYPTO-6-ISAKMP_ON_OFF: ISAKMP is ON\n%LINEPROTO-5-UPDOWN: Line protocol on Interface Tunnel0, changed state to up" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow cry|pto ikev2 sa",
+        output: ` IPv4 Crypto IKEv2  SA
+
+Tunnel-id Local                 Remote                fvrf/ivrf            Status
+1         203.0.113.1/500       198.51.100.2/500      none/none            READY
+      Encr: AES-CBC, keysize: 256, PRF: SHA512, Hash: SHA512, DH Grp:19, Auth sign: PSK, Auth verify: PSK`,
+      },
+    ],
+  },
+  {
+    id: "eigrp-named",
+    exam: "encor",
+    objective: "3.2.a",
+    title: "EIGRP named mode with passive defaults and unequal-cost load sharing",
+    hostname: "R1",
+    platform: "ios-xe",
+    brief: "Run EIGRP named mode CORP, AS 100, on all 10.0.0.0/8 interfaces. Make interfaces passive by default and form neighbours only on Gi0/1. Allow unequal-cost load balancing with variance 2.",
+    topology: `  LANs (passive) ── [R1] Gi0/1 ══ EIGRP AS 100 ══ R2`,
+    steps: [
+      enable,
+      conft,
+      { task: "Start EIGRP named mode CORP.", cmd: "router eigrp CORP", accept: ["router eigrp CORP"], enters: "config-router", hint: "router eigrp CORP" },
+      { task: "IPv4 unicast address family, AS 100.", cmd: "address-family ipv4 unicast autonomous-system 100", accept: ["addr|ess-family ipv4 (uni|cast) auto|nomous-system 100"], enters: "config-router-af", hint: "address-family ipv4 unicast autonomous-system 100" },
+      { task: "Enable EIGRP on 10.0.0.0/8.", cmd: "network 10.0.0.0 0.255.255.255", accept: ["net|work 10.0.0.0 0.255.255.255", "net|work 10.0.0.0"], hint: "network 10.0.0.0 0.255.255.255" },
+      { task: "Enter the default interface settings.", cmd: "af-interface default", accept: ["af-int|erface def|ault"], enters: "config-router-af-interface", hint: "af-interface default" },
+      { task: "Make every interface passive.", cmd: "passive-interface", accept: ["pass|ive-interface"], hint: "passive-interface" },
+      { task: "Leave the default interface section.", cmd: "exit-af-interface", accept: ["exit-af-int|erface", "exi|t"], leaves: 1, hint: "exit-af-interface" },
+      { task: "Select Gi0/1.", cmd: "af-interface GigabitEthernet0/1", accept: ["af-int|erface <if:gi0/1>"], enters: "config-router-af-interface", hint: "af-interface gi0/1" },
+      { task: "Allow neighbours on it.", cmd: "no passive-interface", accept: ["no pass|ive-interface"], hint: "no passive-interface" },
+      { task: "Leave the interface section.", cmd: "exit-af-interface", accept: ["exit-af-int|erface", "exi|t"], leaves: 1, hint: "exit-af-interface" },
+      { task: "Enter the base topology.", cmd: "topology base", accept: ["top|ology base"], enters: "config-router-af-topology", hint: "topology base" },
+      { task: "Unequal-cost load balancing up to twice the best metric.", cmd: "variance 2", accept: ["var|iance 2"], hint: "variance 2", output: "%DUAL-5-NBRCHANGE: EIGRP-IPv4 100: Neighbor 10.0.12.2 (GigabitEthernet0/1) is up: new adjacency" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ip eigrp nei|ghbors",
+        output: `EIGRP-IPv4 VR(CORP) Address-Family Neighbors for AS(100)
+H   Address                 Interface              Hold Uptime   SRTT   RTO  Q  Seq
+                                                   (sec)         (ms)       Cnt Num
+0   10.0.12.2               Gi0/1                    13 00:00:21    1   100  0  7`,
+      },
+    ],
+  },
+  {
+    id: "pbr-guest",
+    exam: "encor",
+    objective: "3.2.d",
+    title: "Policy-route guest traffic to the Internet link",
+    hostname: "BR1",
+    platform: "ios-xe",
+    brief: "Guest users (10.50.0.0/24, arriving on Gi0/2) must leave via the cheap Internet circuit at 203.0.113.1, whatever the routing table says. Corporate traffic keeps following normal routing over MPLS.",
+    topology: `  guests 10.50.0.0/24 ── Gi0/2 [BR1] ── Gi0/0 MPLS (routing table)
+                                     └── Gi0/1 Internet 203.0.113.1 (PBR)`,
+    steps: [
+      enable,
+      conft,
+      { task: "Create extended ACL GUEST.", cmd: "ip access-list extended GUEST", accept: ["ip access-l|ist ext|ended GUEST"], enters: "config-ext-nacl", hint: "ip access-list extended GUEST" },
+      { task: "Match the guest subnet to anywhere.", cmd: "permit ip 10.50.0.0 0.0.0.255 any", accept: ["(10) perm|it ip 10.50.0.0 0.0.0.255 any"], hint: "permit ip 10.50.0.0 0.0.0.255 any" },
+      exit,
+      { task: "Create route-map PBR, permit sequence 10.", cmd: "route-map PBR permit 10", accept: ["route-m|ap PBR (perm|it) (10)"], enters: "config-route-map", hint: "route-map PBR permit 10" },
+      { task: "Match ACL GUEST.", cmd: "match ip address GUEST", accept: ["mat|ch ip add|ress GUEST"], hint: "match ip address GUEST" },
+      { task: "Send it to 203.0.113.1.", cmd: "set ip next-hop 203.0.113.1", accept: ["set ip next-h|op 203.0.113.1"], hint: "set ip next-hop 203.0.113.1" },
+      exit,
+      { task: "Go to the guest-facing interface.", cmd: "interface GigabitEthernet0/2", accept: ["int|erface <if:gi0/2>"], enters: "config-if", hint: "interface gi0/2" },
+      { task: "Apply the policy to arriving traffic.", cmd: "ip policy route-map PBR", accept: ["ip pol|icy route-m|ap PBR"], hint: "ip policy route-map PBR" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow route-m|ap (PBR)",
+        output: `route-map PBR, permit, sequence 10
+  Match clauses:
+    ip address (access-lists): GUEST
+  Set clauses:
+    ip next-hop 203.0.113.1
+  Policy routing matches: 18342 packets, 21945120 bytes`,
+      },
+    ],
+  },
+  {
+    id: "ntp-auth",
+    exam: "encor",
+    objective: "3.3.a",
+    title: "Authenticated NTP client",
+    hostname: "R1",
+    platform: "ios-xe",
+    brief: "Sync R1 to the NTP server 10.0.0.1, and accept time only if it is authenticated with MD5 key 1 ('Tick70ck').",
+    topology: `  [R1] ── NTP (key 1, MD5) ──▶ 10.0.0.1 (stratum 2)`,
+    steps: [
+      enable,
+      conft,
+      { task: "Define authentication key 1 (MD5).", cmd: "ntp authentication-key 1 md5 Tick70ck", accept: ["ntp authentication-k|ey 1 md5 Tick70ck"], hint: "ntp authentication-key 1 md5 Tick70ck" },
+      { task: "Require authentication.", cmd: "ntp authenticate", accept: ["ntp authenticate"], hint: "ntp authenticate" },
+      { task: "Trust key 1.", cmd: "ntp trusted-key 1", accept: ["ntp trusted-k|ey 1"], hint: "ntp trusted-key 1" },
+      { task: "Use server 10.0.0.1 with key 1.", cmd: "ntp server 10.0.0.1 key 1", accept: ["ntp serv|er 10.0.0.1 key 1"], hint: "ntp server 10.0.0.1 key 1" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ntp ass|ociations",
+        output: `  address         ref clock       st   when   poll reach  delay  offset   disp
+*~10.0.0.1        192.0.2.10       2     21     64   377  1.102  -0.207  0.188
+ * sys.peer, # selected, + candidate, - outlyer, x falseticker, ~ configured`,
+      },
+      { match: "sh|ow ntp stat|us", output: "Clock is synchronized, stratum 3, reference is 10.0.0.1" },
+    ],
+  },
+  {
+    id: "pim-sm",
+    exam: "encor",
+    objective: "3.3.d",
+    title: "PIM sparse mode with a static RP",
+    hostname: "R2",
+    platform: "ios-xe",
+    brief: "Enable multicast routing on R2 with PIM sparse mode toward the core (Gi0/1) and the receiver LAN (Gi0/2). The RP is 10.0.0.1. Receivers on Gi0/2 use SSM-capable IGMPv3.",
+    topology: `  source ── ... ── RP 10.0.0.1 ══ Gi0/1 [R2] Gi0/2 ── receivers (IGMPv3)`,
+    steps: [
+      enable,
+      conft,
+      { task: "Enable multicast routing.", cmd: "ip multicast-routing", accept: ["ip multicast-r|outing (distributed)"], hint: "ip multicast-routing" },
+      { task: "Point at the static RP 10.0.0.1.", cmd: "ip pim rp-address 10.0.0.1", accept: ["ip pim rp-a|ddress 10.0.0.1"], hint: "ip pim rp-address 10.0.0.1" },
+      { task: "Core-facing interface.", cmd: "interface GigabitEthernet0/1", accept: ["int|erface <if:gi0/1>"], enters: "config-if", hint: "interface gi0/1" },
+      { task: "PIM sparse mode.", cmd: "ip pim sparse-mode", accept: ["ip pim sparse-m|ode"], hint: "ip pim sparse-mode" },
+      exit,
+      { task: "Receiver LAN interface.", cmd: "interface GigabitEthernet0/2", accept: ["int|erface <if:gi0/2>"], enters: "config-if", hint: "interface gi0/2" },
+      { task: "PIM sparse mode here too (the DR for the LAN).", cmd: "ip pim sparse-mode", accept: ["ip pim sparse-m|ode"], hint: "ip pim sparse-mode" },
+      { task: "IGMP version 3.", cmd: "ip igmp version 3", accept: ["ip igmp vers|ion 3"], hint: "ip igmp version 3" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ip mroute",
+        output: `(*, 239.1.1.1), 00:02:11/00:03:08, RP 10.0.0.1, flags: SC
+  Incoming interface: GigabitEthernet0/1, RPF nbr 10.0.12.1
+  Outgoing interface list:
+    GigabitEthernet0/2, Forward/Sparse, 00:02:11/00:03:08
+
+(10.9.9.9, 239.1.1.1), 00:01:40/00:02:59, flags: T
+  Incoming interface: GigabitEthernet0/1, RPF nbr 10.0.12.1
+  Outgoing interface list:
+    GigabitEthernet0/2, Forward/Sparse, 00:01:40/00:03:08`,
+      },
+    ],
+  },
+  {
+    id: "netflow",
+    exam: "encor",
+    objective: "4.2",
+    title: "Flexible NetFlow to a collector",
+    hostname: "BR1",
+    platform: "ios-xe",
+    brief: "Export flows seen arriving on Gi0/1 to the collector 10.0.0.50 (UDP 2055, NetFlow v9). Key flows on the 5-tuple and collect byte and packet counters.",
+    topology: `  users ── Gi0/1 [BR1] ── WAN        exporter ──▶ 10.0.0.50:2055`,
+    steps: [
+      enable,
+      conft,
+      { task: "Create flow record REC.", cmd: "flow record REC", accept: ["flow rec|ord REC"], enters: "config-flow-record", hint: "flow record REC" },
+      { task: "Key on source IPv4 address.", cmd: "match ipv4 source address", accept: ["mat|ch ipv4 sou|rce add|ress"], hint: "match ipv4 source address" },
+      { task: "Key on destination IPv4 address.", cmd: "match ipv4 destination address", accept: ["mat|ch ipv4 dest|ination add|ress"], hint: "match ipv4 destination address" },
+      { task: "Key on the protocol.", cmd: "match ipv4 protocol", accept: ["mat|ch ipv4 prot|ocol"], hint: "match ipv4 protocol" },
+      { task: "Key on the source port.", cmd: "match transport source-port", accept: ["mat|ch trans|port source-p|ort"], hint: "match transport source-port" },
+      { task: "Key on the destination port.", cmd: "match transport destination-port", accept: ["mat|ch trans|port destination-p|ort"], hint: "match transport destination-port" },
+      { task: "Collect the byte count.", cmd: "collect counter bytes long", accept: ["coll|ect coun|ter bytes (long)"], hint: "collect counter bytes long" },
+      { task: "Collect the packet count.", cmd: "collect counter packets long", accept: ["coll|ect coun|ter packets (long)"], hint: "collect counter packets long" },
+      exit,
+      { task: "Create flow exporter EXP.", cmd: "flow exporter EXP", accept: ["flow exp|orter EXP"], enters: "config-flow-exporter", hint: "flow exporter EXP" },
+      { task: "Collector address.", cmd: "destination 10.0.0.50", accept: ["dest|ination 10.0.0.50"], hint: "destination 10.0.0.50" },
+      { task: "UDP port 2055.", cmd: "transport udp 2055", accept: ["trans|port udp 2055"], hint: "transport udp 2055" },
+      { task: "NetFlow v9 format.", cmd: "export-protocol netflow-v9", accept: ["export-p|rotocol netflow-v9"], hint: "export-protocol netflow-v9" },
+      exit,
+      { task: "Create flow monitor MON.", cmd: "flow monitor MON", accept: ["flow mon|itor MON"], enters: "config-flow-monitor", hint: "flow monitor MON" },
+      { task: "Use record REC.", cmd: "record REC", accept: ["rec|ord REC"], hint: "record REC" },
+      { task: "Use exporter EXP.", cmd: "exporter EXP", accept: ["exp|orter EXP"], hint: "exporter EXP" },
+      exit,
+      { task: "Go to Gi0/1.", cmd: "interface GigabitEthernet0/1", accept: ["int|erface <if:gi0/1>"], enters: "config-if", hint: "interface gi0/1" },
+      { task: "Monitor arriving traffic.", cmd: "ip flow monitor MON input", accept: ["ip flow mon|itor MON in|put"], hint: "ip flow monitor MON input" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow flow exp|orter stat|istics",
+        output: `Flow Exporter EXP:
+  Packet send statistics (last cleared 00:10:12 ago):
+    Successfully sent:         412                   (58214 bytes)`,
+      },
+    ],
+  },
+  {
+    id: "span-erspan",
+    exam: "encor",
+    objective: "4.3",
+    title: "Local SPAN and an ERSPAN source session",
+    hostname: "SW1",
+    platform: "ios-xe",
+    brief: "Mirror Gi1/0/1 (both directions) to a local analyser on Gi1/0/24. Also send received traffic from Gi1/0/2 across the routed core with ERSPAN ID 10 to the collector 10.9.9.9, sourced from 10.0.0.2.",
+    topology: `  Gi1/0/1 ⇄ ─ SPAN 1 ─▶ Gi1/0/24 analyser
+  Gi1/0/2 ← ─ ERSPAN 2 (GRE) ═ routed core ═▶ 10.9.9.9`,
+    steps: [
+      enable,
+      conft,
+      { task: "Session 1 source: Gi1/0/1, both directions.", cmd: "monitor session 1 source interface GigabitEthernet1/0/1 both", accept: ["mon|itor sess|ion 1 sou|rce int|erface <if:gi1/0/1> (both)"], hint: "monitor session 1 source interface gi1/0/1 both" },
+      { task: "Session 1 destination: Gi1/0/24.", cmd: "monitor session 1 destination interface GigabitEthernet1/0/24", accept: ["mon|itor sess|ion 1 dest|ination int|erface <if:gi1/0/24>"], hint: "monitor session 1 destination interface gi1/0/24" },
+      { task: "Create ERSPAN source session 2.", cmd: "monitor session 2 type erspan-source", accept: ["mon|itor sess|ion 2 type erspan-s|ource"], enters: "config-mon-erspan-src", hint: "monitor session 2 type erspan-source" },
+      { task: "Source Gi1/0/2, received traffic.", cmd: "source interface GigabitEthernet1/0/2 rx", accept: ["sou|rce int|erface <if:gi1/0/2> rx"], hint: "source interface gi1/0/2 rx" },
+      { task: "Enter the destination section.", cmd: "destination", accept: ["dest|ination"], enters: "config-mon-erspan-src-dst", hint: "destination" },
+      { task: "ERSPAN ID 10.", cmd: "erspan-id 10", accept: ["erspan-id 10"], hint: "erspan-id 10" },
+      { task: "Collector address 10.9.9.9.", cmd: "ip address 10.9.9.9", accept: ["ip add|ress 10.9.9.9"], hint: "ip address 10.9.9.9" },
+      { task: "Source the GRE packets from 10.0.0.2.", cmd: "origin ip address 10.0.0.2", accept: ["orig|in ip add|ress 10.0.0.2"], hint: "origin ip address 10.0.0.2" },
+      exit,
+      { task: "ERSPAN sessions start shut down: enable it.", cmd: "no shutdown", accept: ["no shut|down"], hint: "no shutdown" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow mon|itor (sess|ion all)",
+        output: `Session 1
+---------
+Type                     : Local Session
+Source Ports             :
+    Both                 : Gi1/0/1
+Destination Ports        : Gi1/0/24
+
+Session 2
+---------
+Type                     : ERSPAN Source Session
+Status                   : Admin Enabled
+Source Ports             :
+    RX Only              : Gi1/0/2
+Destination IP Address   : 10.9.9.9
+Origin IP Address        : 10.0.0.2
+ERSPAN ID                : 10`,
+      },
+    ],
+  },
+  {
+    id: "netconf-restconf",
+    exam: "encor",
+    objective: "4.6",
+    title: "Turn on NETCONF and RESTCONF",
+    hostname: "R1",
+    platform: "ios-xe",
+    brief: "An automation team needs NETCONF (SSH 830) and RESTCONF (HTTPS) on R1. Create a privilege-15 local user 'netops' (secret 'Aut0mate!'), enable both agents and the HTTPS server with local authentication.",
+    topology: `  automation host ── NETCONF/SSH 830 ──▶ [R1]
+                  └── RESTCONF/HTTPS 443 ──▶`,
+    steps: [
+      enable,
+      conft,
+      { task: "Create user netops with privilege 15.", cmd: "username netops privilege 15 secret Aut0mate!", accept: ["user|name netops priv|ilege 15 sec|ret Aut0mate!"], hint: "username netops privilege 15 secret Aut0mate!" },
+      { task: "Enable the NETCONF agent.", cmd: "netconf-yang", accept: ["netconf-yang"], hint: "netconf-yang" },
+      { task: "Enable the HTTPS server.", cmd: "ip http secure-server", accept: ["ip http secure-s|erver"], hint: "ip http secure-server" },
+      { task: "Authenticate HTTP users locally.", cmd: "ip http authentication local", accept: ["ip http auth|entication loc|al"], hint: "ip http authentication local" },
+      { task: "Enable RESTCONF.", cmd: "restconf", accept: ["restconf"], hint: "restconf" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow netconf-yang stat|us",
+        output: `netconf-yang: enabled
+netconf-yang ssh port: 830
+netconf-yang candidate-datastore: disabled`,
+      },
+      {
+        match: "sh|ow platform software yang-management process",
+        output: `confd            : Running
+nesd             : Running
+syncfd           : Running
+ncsshd           : Running
+dmiauthd         : Running
+nginx            : Running
+ndbmand          : Running
+pubd             : Running`,
+      },
+    ],
+  },
+  {
+    id: "ssh-local",
+    exam: "encor",
+    objective: "5.1.a",
+    title: "SSH-only access with local users",
+    hostname: "R1",
+    platform: "ios-xe",
+    brief: "Replace Telnet with SSHv2 on R1. Use domain corp.local and 2048-bit RSA keys, a local admin with a type-9 secret ('Str0ngPass!'), and log idle VTY sessions out after 10 minutes.",
+    topology: `  admin ── SSHv2 ──▶ [R1] vty 0 4 (Telnet refused)`,
+    steps: [
+      enable,
+      conft,
+      { task: "Set the domain name (needed for the RSA key name).", cmd: "ip domain name corp.local", accept: ["ip domain name corp.local", "ip domain-name corp.local"], hint: "ip domain name corp.local" },
+      { task: "Generate 2048-bit RSA keys.", cmd: "crypto key generate rsa modulus 2048", accept: ["cry|pto key gen|erate rsa (gen|eral-keys) mod|ulus 2048"], hint: "crypto key generate rsa modulus 2048", output: "% Generating 2048 bit RSA keys, keys will be non-exportable...\n[OK] (elapsed time was 1 seconds)\n%SSH-5-ENABLED: SSH 1.99 has been enabled" },
+      { task: "Allow SSH version 2 only.", cmd: "ip ssh version 2", accept: ["ip ssh vers|ion 2"], hint: "ip ssh version 2" },
+      { task: "Local admin with a type-9 secret.", cmd: "username admin privilege 15 algorithm-type scrypt secret Str0ngPass!", accept: ["user|name admin priv|ilege 15 alg|orithm-type scrypt sec|ret Str0ngPass!"], hint: "username admin privilege 15 algorithm-type scrypt secret Str0ngPass!" },
+      { task: "Configure VTY lines 0 to 4.", cmd: "line vty 0 4", accept: ["line vty 0 4"], enters: "config-line", hint: "line vty 0 4" },
+      { task: "Authenticate with local users.", cmd: "login local", accept: ["login local"], hint: "login local" },
+      { task: "Allow SSH only.", cmd: "transport input ssh", accept: ["trans|port in|put ssh"], hint: "transport input ssh" },
+      { task: "Idle timeout 10 minutes.", cmd: "exec-timeout 10 0", accept: ["exec-t|imeout 10 (0)"], hint: "exec-timeout 10 0" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow ip ssh",
+        output: `SSH Enabled - version 2.0
+Authentication methods:publickey,keyboard-interactive,password
+Authentication timeout: 120 secs; Authentication retries: 3`,
+      },
+    ],
+  },
+  {
+    id: "copp",
+    exam: "encor",
+    objective: "5.2.b",
+    title: "Police management traffic to the control plane",
+    hostname: "R1",
+    platform: "ios-xe",
+    brief: "Protect R1's CPU: SSH from the management subnet 10.0.0.0/24 is policed to 128 kb/s (excess dropped), and that policy is applied to the control plane. (Routers use user-defined CoPP. Catalyst 9000 switches ship a fixed system CoPP policy.)",
+    topology: `  mgmt 10.0.0.0/24 ── SSH ──▶ [R1 control plane]  policy COPP (128 kb/s)`,
+    steps: [
+      enable,
+      conft,
+      { task: "ACL COPP-SSH for management SSH.", cmd: "ip access-list extended COPP-SSH", accept: ["ip access-l|ist ext|ended COPP-SSH"], enters: "config-ext-nacl", hint: "ip access-list extended COPP-SSH" },
+      { task: "Match SSH from 10.0.0.0/24.", cmd: "permit tcp 10.0.0.0 0.0.0.255 any eq 22", accept: ["(10) perm|it tcp 10.0.0.0 0.0.0.255 any eq {22,ssh}"], hint: "permit tcp 10.0.0.0 0.0.0.255 any eq 22" },
+      exit,
+      { task: "Class-map CM-SSH.", cmd: "class-map match-all CM-SSH", accept: ["class-m|ap (match-all) CM-SSH"], enters: "config-cmap", hint: "class-map match-all CM-SSH" },
+      { task: "Match the ACL.", cmd: "match access-group name COPP-SSH", accept: ["mat|ch access-g|roup name COPP-SSH"], hint: "match access-group name COPP-SSH" },
+      exit,
+      { task: "Policy-map COPP.", cmd: "policy-map COPP", accept: ["policy-m|ap COPP"], enters: "config-pmap", hint: "policy-map COPP" },
+      { task: "Select class CM-SSH.", cmd: "class CM-SSH", accept: ["cla|ss CM-SSH"], enters: "config-pmap-c", hint: "class CM-SSH" },
+      { task: "Police to 128 kb/s: transmit conforming, drop excess.", cmd: "police 128000 conform-action transmit exceed-action drop", accept: ["pol|ice (cir) 128000 conform-a|ction trans|mit exceed-a|ction drop"], hint: "police 128000 conform-action transmit exceed-action drop" },
+      exit,
+      exit,
+      { task: "Enter the control plane.", cmd: "control-plane", accept: ["control-p|lane"], enters: "config-cp", hint: "control-plane" },
+      { task: "Apply COPP inbound.", cmd: "service-policy input COPP", accept: ["serv|ice-policy in|put COPP"], hint: "service-policy input COPP" },
+      end,
+    ],
+    shows: [
+      {
+        match: "sh|ow policy-map control-p|lane",
+        output: ` Control Plane
+
+  Service-policy input: COPP
+
+    Class-map: CM-SSH (match-all)
+      2381 packets, 291442 bytes
+      Match: access-group name COPP-SSH
+      police:
+          cir 128000 bps, bc 4000 bytes
+        conformed 2301 packets, 280122 bytes; actions:
+          transmit
+        exceeded 80 packets, 11320 bytes; actions:
+          drop`,
+      },
+    ],
+  },
   {
     id: "roce-pfc",
     exam: "dcai",
