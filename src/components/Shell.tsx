@@ -88,6 +88,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link href="/wire" className="hide-sm">
             wire
           </Link>
+          <Link href="/fabric" className="hide-sm">
+            fabric
+          </Link>
           <Link href="/labs" className="hide-sm">
             drills
           </Link>

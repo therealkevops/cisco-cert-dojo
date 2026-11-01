@@ -9,6 +9,8 @@ import { initialState, runLine } from "../src/lib/terminal.ts";
 import { scenarios, campus } from "../src/data/wire.ts";
 import { gradeGoals } from "../src/lib/net/grade.ts";
 import { practicals } from "../src/data/practice.ts";
+import { fabricScenarios } from "../src/data/fabric.ts";
+import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
 import { Net } from "../src/lib/net/engine.ts";
 import { newSession, runCli } from "../src/lib/ios/cli.ts";
 
@@ -219,6 +221,38 @@ for (const sc of scenarios) {
   for (const g of gradeGoals(topo, sc.goals)) if (!g.ok) fail(`wire ${sc.id}: CLI fix fails "${g.goal.label}" (${g.detail})`);
 }
 console.log(`wire   ${scenarios.length} scenarios (data + CLI fixes)`);
+// Fabric Lab: each challenge must fail as shipped and pass with its reference fix.
+const sw = (f, fn) => Object.values(f.switches).forEach(fn);
+const fabricFixes = {
+  "fab-dscp": (f) => sw(f, (s) => (s.noDropDscp = [24, 26])),
+  "fab-ecn": (f) => sw(f, (s) => (s.ecn = true)),
+  "fab-ecn-thresholds": (f) => sw(f, (s) => ((s.kmin = 100), (s.kmax = 400))),
+  "fab-dcqcn": (f) => Object.values(f.hosts).forEach((h) => (h.dcqcn = true)),
+  "fab-mtu": (f) => (f.switches.L4.mtu = 9216),
+  "fab-hash": (f) => sw(f, (s) => (s.dlb = true)),
+  "fab-storm": (f) => sw(f, (s) => (s.watchdog = true)),
+  "fab-optic": (f) => delete f.links["H6-L2"].crc,
+};
+const fabricAlt = {
+  "fab-hash": (f) => (sw(f, (s) => (s.hash = "l3l4")), Object.values(f.hosts).forEach((h) => (h.qps = 4))),
+  "fab-storm": (f) => (f.hosts.H12.up = false),
+};
+for (const sc of fabricScenarios) {
+  if (sc.kind !== "challenge") continue;
+  const before = gradeFabric(simulate(sc.fabric), sc.goals);
+  if (before.every((g) => g.ok)) fail(`fabric ${sc.id}: already passes before any fix`);
+  for (const [name, fix] of [["reference", fabricFixes[sc.id]], ["alternative", fabricAlt[sc.id]]]) {
+    if (!fix) {
+      if (name === "reference") fail(`fabric ${sc.id}: no reference fix`);
+      continue;
+    }
+    const f = structuredClone(sc.fabric);
+    fix(f);
+    for (const g of gradeFabric(simulate(f), sc.goals)) if (!g.ok) fail(`fabric ${sc.id}: ${name} fix fails "${g.goal.label}" (${g.detail})`);
+  }
+}
+console.log(`fabric ${fabricScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+
 // Every hands-on item must land on a real blueprint objective, or it would silently never count toward mastery.
 for (const x of practicals) {
   const exam = exams[x.exam];

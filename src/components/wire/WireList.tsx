@@ -38,7 +38,7 @@ export function WireList() {
             <span className="silk">{s.kind}</span>
             <span className="silk">{s.objective}</span>
             <span className="title">{s.title}</span>
-            <span className={`state ${p.wire[s.id] ? "done" : ""}`}>{s.kind === "sandbox" ? "example" : p.wire[s.id] ? "solved ✓" : `${s.goals.length} checks`}</span>
+            <span className={`state ${p.wire[s.id] ? "done" : ""}`}>{s.kind === "sandbox" ? "example" : p.wire[s.id] ? "solved ✓" : `${s.goals.length} check${s.goals.length === 1 ? "" : "s"}`}</span>
           </Link>
         ))}
       </div>

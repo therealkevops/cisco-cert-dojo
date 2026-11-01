@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { examList } from "@/data/catalog";
 import { labs } from "@/data/labs";
+import { fabricScenarios } from "@/data/fabric";
 import { scenarios } from "@/data/wire";
 
 type Cmd = { name: string; help: string; run: () => void };
@@ -24,6 +25,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       { name: "rack", help: "home: every chassis and its port lights", run: go("/") },
       { name: "labs", help: "list all config drills", run: go("/labs") },
       { name: "drills", help: "list all config drills", run: go("/labs") },
+      { name: "fabric", help: "Fabric Lab: RoCEv2 PFC/ECN simulator (DCAI)", run: go("/fabric") },
       { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
       { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
     ];
@@ -32,6 +34,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       list.push({ name: `kata ${e.id}`, help: `${e.short}: spaced-repetition drill`, run: go(`/exam/${e.id}/kata`) });
       list.push({ name: `mock ${e.id}`, help: `${e.short}: timed mock exam`, run: go(`/exam/${e.id}/mock`) });
     }
+    for (const s of fabricScenarios) list.push({ name: `fabric ${s.id}`, help: s.title, run: go(`/fabric/${s.id}`) });
     for (const s of scenarios) list.push({ name: `wire ${s.id}`, help: s.title, run: go(`/wire/${s.id}`) });
     for (const l of labs) list.push({ name: `lab ${l.id}`, help: l.title, run: go(`/labs/${l.id}`) });
     list.push({

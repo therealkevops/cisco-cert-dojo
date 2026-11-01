@@ -31,11 +31,12 @@ export type Progress = {
   mocks: MockResult[];
   read: Record<string, number>; // `${exam}:${objective}` -> epoch ms
   wire: Record<string, { at: number }>; // solved Wire Room challenges
+  fabric: Record<string, { at: number }>; // solved Fabric Lab challenges
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -121,6 +122,12 @@ export function recordWire(scenarioId: string) {
   save({ ...p, wire: { ...p.wire, [scenarioId]: { at: Date.now() } }, days: touchDay(p) });
 }
 
+export function recordFabric(scenarioId: string) {
+  const p = load();
+  if (p.fabric[scenarioId]) return;
+  save({ ...p, fabric: { ...p.fabric, [scenarioId]: { at: Date.now() } }, days: touchDay(p) });
+}
+
 export function recordMock(result: MockResult) {
   const p = load();
   save({ ...p, mocks: [...p.mocks, result].slice(-50), days: touchDay(p) });
@@ -153,7 +160,7 @@ export function resetProgress() {
 export const PRACTICAL_WEIGHT = 2;
 
 export function practicalDone(p: Progress, x: Practical): boolean {
-  return x.kind === "wire" ? !!p.wire[x.id] : !!p.labs[x.id];
+  return x.kind === "wire" ? !!p.wire[x.id] : x.kind === "fabric" ? !!p.fabric[x.id] : !!p.labs[x.id];
 }
 
 /**

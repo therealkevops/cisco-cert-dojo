@@ -16,8 +16,8 @@ export function RackView() {
   const planned = tracks.filter((t) => t.status === "planned");
   const answered = Object.keys(p.cards).length;
   const labsDone = Object.keys(p.labs).length;
-  const wireDone = practicals.filter((x) => x.kind === "wire" && p.wire[x.id]).length;
-  const wireTotal = practicals.filter((x) => x.kind === "wire").length;
+  const wireDone = practicals.filter((x) => (x.kind === "wire" && p.wire[x.id]) || (x.kind === "fabric" && p.fabric[x.id])).length;
+  const wireTotal = practicals.filter((x) => x.kind !== "lab").length;
   const lastMock = p.mocks[p.mocks.length - 1];
 
   const download = () => {
