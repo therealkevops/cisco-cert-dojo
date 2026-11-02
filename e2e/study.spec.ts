@@ -54,7 +54,7 @@ test("an NX-OS upgrade drill accepts show commands as steps", async ({ page }) =
     "dir bootflash:",
     "show install all impact nxos bootflash:nxos64-cs.10.4.3.F.bin",
     "install all nxos bootflash:nxos64-cs.10.4.3.F.bin",
-    "show install epld bootflash:n9000-epld.10.4.3.F.img module all",
+    "show install all impact epld bootflash:n9000-epld.10.4.3.F.img",
     "install epld bootflash:n9000-epld.10.4.3.F.img module all",
   ]) {
     await input.fill(l);

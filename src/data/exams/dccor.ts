@@ -158,7 +158,7 @@ interface port-channel20
             "`host-reachability protocol bgp` turns on EVPN learning. BUM uses `ingress-replication protocol bgp` or a multicast group (`mcast-group`).",
             "L2VNI bridges within a segment. L3VNI (one per VRF) routes between segments with symmetric IRB.",
             "Distributed anycast gateway: `fabric forwarding anycast-gateway-mac` globally and `fabric forwarding mode anycast-gateway` on SVIs.",
-            "`suppression-arp` lets the leaf answer ARP from EVPN information, cutting flooding.",
+            "`suppress-arp` (under the NVE member VNI) lets the leaf answer ARP from EVPN information, cutting flooding.",
           ],
           cli: `vlan 10
   vn-segment 10010
@@ -241,14 +241,14 @@ evpn
           keys: [
             "`checkpoint NAME` saves the running config. NX-OS also takes automatic checkpoints before some changes.",
             "`rollback running-config checkpoint NAME` with modes atomic (default: all or nothing), best-effort and stop-at-first-failure.",
-            "`show diff rollback-patch checkpoint NAME running-config` previews what a rollback would change.",
+            "`show diff rollback-patch running-config checkpoint NAME` previews the commands a rollback would apply (source first, then destination).",
             "`configure replace bootflash:golden.cfg` replaces the whole running config with a file, applying only the differences.",
             "`copy running-config startup-config` persists changes. Back up off-box with `copy running-config scp://... vrf management`.",
             "Nexus Dashboard (fabric controller) templates detect configuration drift (compliance) and can deploy fixes.",
           ],
           cli: `checkpoint before-change
 ! ...make changes...
-show diff rollback-patch checkpoint before-change running-config
+show diff rollback-patch running-config checkpoint before-change
 rollback running-config checkpoint before-change atomic`,
           trap: "Checkpoints live on the switch and are lost by `write erase` and reloads into a clean config, so they don't replace off-box backups.",
         },
