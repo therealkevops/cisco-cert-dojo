@@ -1354,3 +1354,35 @@ h3.display { font-size: 28px; }
 @media (max-width: 1000px) {
   .ucs-grid, .ucs-deploy, .ucs-two { grid-template-columns: 1fr; }
 }
+
+/* SAN Lab */
+.page.san { max-width: 1360px; }
+.san-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; padding: 20px 0 16px; align-items: stretch; }
+.san-map { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px 8px; display: flex; flex-direction: column; }
+.san-map svg { width: 100%; height: auto; display: block; font-family: var(--mono); flex: 1; }
+.san-legend { margin: 6px 2px 0; font-size: 11px; }
+.san-link line { stroke-width: 1.8; }
+.san-link.up line { stroke: var(--green); }
+.san-link.down line { stroke: var(--red); stroke-dasharray: 7 6; }
+.san-link text { fill: var(--muted); font-size: 9px; }
+.san-link .san-link-kind { fill: var(--ink-2); font-size: 8.5px; letter-spacing: 0.08em; }
+.san-sw { cursor: pointer; }
+.san-sw rect { fill: var(--panel-hi); stroke: var(--line); stroke-width: 1.5; }
+.san-sw.on rect { stroke: var(--amber); stroke-width: 2.5; }
+.san-sw-name { fill: var(--ink); font-size: 12px; font-weight: 600; }
+.san-sw-sub { fill: var(--muted); font-size: 9px; }
+.san-dev rect { fill: var(--bg); stroke: var(--line); stroke-width: 1.5; }
+.san-dev.array rect { stroke: var(--amber-dim); }
+.san-dev text { fill: var(--ink-2); font-size: 10px; }
+.san-dev .led { fill: var(--led-off); }
+.san-dev .led.ok { fill: var(--green); }
+.san-term { display: flex; flex-direction: column; min-height: 460px; }
+.san-tabs { display: flex; gap: 4px; }
+.san-tabs button { font: inherit; font-family: var(--mono); font-size: 12px; background: var(--panel); color: var(--ink-2); border: 1px solid var(--line); border-bottom: 0; border-radius: 5px 5px 0 0; padding: 6px 12px; cursor: pointer; }
+.san-tabs button.on { background: var(--term-bg); color: var(--term-ink); border-color: var(--term-bg); }
+.san-con { flex: 1; background: var(--term-bg); border-radius: 0 6px 6px 6px; font-family: var(--mono); min-height: 420px; max-height: 560px; display: flex; flex-direction: column; overflow: hidden; }
+.san-con .con { font-size: 12.5px; }
+.san-goals { margin-bottom: 40px; }
+.san-solution { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.san-solution pre { background: var(--term-bg); color: var(--term-ink); padding: 10px 14px; border-radius: 5px; font-size: 12px; margin: 0; }
+@media (max-width: 900px) { .san-grid { grid-template-columns: 1fr; } }

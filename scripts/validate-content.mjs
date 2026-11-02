@@ -12,6 +12,9 @@ import { allPracticals as practicals } from "../src/data/practice.ts";
 import { fabricScenarios } from "../src/data/fabric.ts";
 import { ucsScenarios } from "../src/data/ucs.ts";
 import { gradeUcs } from "../src/lib/ucs.ts";
+import { sanScenarios } from "../src/data/san.ts";
+import { gradeSan } from "../src/lib/san.ts";
+import { runSanCli } from "../src/lib/san-cli.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -300,6 +303,26 @@ for (const sc of ucsScenarios) {
   for (const g of gradeUcs(c, sc.goals)) if (!g.ok) fail(`ucs ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
 }
 console.log(`ucs    ${ucsScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+
+// SAN Lab: broken as shipped; the reference fix, replayed through the MDS CLI, must run cleanly and pass.
+for (const sc of sanScenarios) {
+  for (const id of [...sc.fabric.switches.map((s) => s.id), ...sc.fabric.devices.map((d) => d.id)]) if (!sc.pos[id]) fail(`san ${sc.id}: no diagram position for ${id}`);
+  if (gradeSan(sc.fabric, sc.goals).every((g) => g.ok)) fail(`san ${sc.id}: already passes before any fix`);
+  let f = sc.fabric;
+  const before = JSON.stringify(sc.fabric);
+  for (const step of sc.solution) {
+    let sess = { sw: step.sw, mode: { m: "exec" } };
+    for (const line of step.lines) {
+      const r = runSanCli(line, sess, f);
+      if (r.out.startsWith("%") || r.out.includes("% Invalid")) fail(`san ${sc.id}: "${line}" on ${step.sw} → ${r.out.split("\n").pop()}`);
+      sess = r.session;
+      if (r.fabric) f = r.fabric;
+    }
+  }
+  if (JSON.stringify(sc.fabric) !== before) fail(`san ${sc.id}: the CLI mutated the shipped fabric`);
+  for (const g of gradeSan(f, sc.goals)) if (!g.ok) fail(`san ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+}
+console.log(`san    ${sanScenarios.length} tickets (broken as shipped, CLI reference fix passes)`);
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();

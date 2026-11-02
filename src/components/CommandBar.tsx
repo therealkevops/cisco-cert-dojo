@@ -6,6 +6,7 @@ import { examList } from "@/data/catalog";
 import { labs } from "@/data/labs";
 import { fabricScenarios } from "@/data/fabric";
 import { ucsScenarios } from "@/data/ucs";
+import { sanScenarios } from "@/data/san";
 import { deskSheets as deskExercises } from "@/data/worksheets";
 import { sizingExercises } from "@/data/sizing";
 import { scenarios } from "@/data/wire";
@@ -32,6 +33,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       { name: "sizing", help: "Sizing Desk: GPU cluster sizing worksheets (DCAI)", run: go("/sizing") },
       { name: "builder", help: "AI cluster builder: live sizing calculator", run: go("/sizing/builder") },
       { name: "ucs", help: "UCS Profile Lab: Intersight domain and server profiles for GPU servers (DCAI)", run: go("/ucs") },
+      { name: "san", help: "SAN Lab: troubleshoot a Fibre Channel fabric from an MDS-style CLI (DCCOR)", run: go("/san") },
       { name: "desk", help: "Design & Automation Desk: ENCOR worksheets (JSON, YANG, APIs, Python, design maths)", run: go("/desk") },
       { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
       { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
@@ -44,6 +46,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
     for (const e of deskExercises) list.push({ name: `desk ${e.id.replace(/^desk-/, "")}`, help: e.title, run: go(`/desk/${e.id}`) });
     for (const e of sizingExercises) list.push({ name: `sizing ${e.id.replace(/^size-/, "")}`, help: e.title, run: go(`/sizing/${e.id}`) });
     for (const s of ucsScenarios) list.push({ name: `ucs ${s.id.replace(/^ucs-/, "")}`, help: s.title, run: go(`/ucs/${s.id}`) });
+    for (const s of sanScenarios) list.push({ name: `san ${s.id.replace(/^san-/, "")}`, help: s.title, run: go(`/san/${s.id}`) });
     for (const s of fabricScenarios) list.push({ name: `fabric ${s.id}`, help: s.title, run: go(`/fabric/${s.id}`) });
     for (const s of scenarios) list.push({ name: `wire ${s.id}`, help: s.title, run: go(`/wire/${s.id}`) });
     for (const l of labs) list.push({ name: `lab ${l.id}`, help: l.title, run: go(`/labs/${l.id}`) });
