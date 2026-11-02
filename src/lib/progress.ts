@@ -35,11 +35,12 @@ export type Progress = {
   sizing: Record<string, { at: number }>; // completed Sizing Desk worksheets
   ucs: Record<string, { at: number }>; // solved UCS Profile Lab scenarios
   san: Record<string, { at: number }>; // solved SAN Lab tickets
+  aci: Record<string, { at: number }>; // solved ACI Policy Lab scenarios
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, ucs: {}, san: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, ucs: {}, san: {}, aci: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -149,6 +150,12 @@ export function recordSan(id: string) {
   save({ ...p, san: { ...p.san, [id]: { at: Date.now() } }, days: touchDay(p) });
 }
 
+export function recordAci(id: string) {
+  const p = load();
+  if (p.aci[id]) return;
+  save({ ...p, aci: { ...p.aci, [id]: { at: Date.now() } }, days: touchDay(p) });
+}
+
 export function recordMock(result: MockResult) {
   const p = load();
   save({ ...p, mocks: [...p.mocks, result].slice(-50), days: touchDay(p) });
@@ -186,6 +193,7 @@ export function practicalDone(p: Progress, x: Practical): boolean {
   if (x.kind === "sizing" || x.kind === "desk") return !!p.sizing[x.id];
   if (x.kind === "ucs") return !!p.ucs[x.id];
   if (x.kind === "san") return !!p.san[x.id];
+  if (x.kind === "aci") return !!p.aci[x.id];
   return !!p.labs[x.id];
 }
 

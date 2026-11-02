@@ -15,6 +15,8 @@ import { gradeUcs } from "../src/lib/ucs.ts";
 import { sanScenarios } from "../src/data/san.ts";
 import { gradeSan } from "../src/lib/san.ts";
 import { runSanCli } from "../src/lib/san-cli.ts";
+import { aciScenarios, baseEndpoints, baseTenant } from "../src/data/aci.ts";
+import { gradeAci, evaluate as evaluateAci } from "../src/lib/aci.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -323,6 +325,47 @@ for (const sc of sanScenarios) {
   for (const g of gradeSan(f, sc.goals)) if (!g.ok) fail(`san ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
 }
 console.log(`san    ${sanScenarios.length} tickets (broken as shipped, CLI reference fix passes)`);
+
+// ACI Policy Lab: the base tenant is clean; each scenario fails as shipped and passes after its fix.
+{
+  const b = evaluateAci(baseTenant(), baseEndpoints);
+  if (b.faults.length) fail(`aci base tenant has faults: ${b.faults[0].text}`);
+  const epgOf = (m, n) => m.epgs.find((e) => e.name === n);
+  const aciFixes = {
+    "aci-access": (m) => {
+      m.pools[0].blocks = "100-199, 200-299";
+      m.intProfiles.push({ name: "L103_SRV", ports: "1/5", policyGroup: "SRV_25G" });
+      m.switchProfiles.push({ name: "LEAF103", leaves: "103", intProfiles: ["L103_SRV"] });
+    },
+    "aci-consume": (m) => {
+      m.filters.find((f) => f.name === "app-8080").entries = "tcp 8080";
+      epgOf(m, "Web").consumes = ["web-to-app"];
+    },
+    "aci-routing": (m) => Object.assign(m.bds.find((x) => x.name === "DB_BD"), { routing: true, subnets: "10.1.3.1/24" }),
+    "aci-direction": (m) => {
+      epgOf(m, "Backup").provides = [];
+      epgOf(m, "Backup").consumes = ["backup"];
+      epgOf(m, "DB").consumes = [];
+      epgOf(m, "DB").provides = ["app-to-db", "backup"];
+    },
+    "aci-unenforced": (m) => {
+      const base = baseTenant();
+      m.contracts = base.contracts;
+      for (const e of m.epgs) Object.assign(e, { provides: epgOf(base, e.name).provides, consumes: epgOf(base, e.name).consumes });
+      m.vrfs[0].enforced = true;
+    },
+    "aci-encap": (m) => (epgOf(m, "App").paths = "102 eth1/10 vlan-120"),
+    "aci-scope": (m) => (m.contracts.find((c) => c.name === "web-to-app").scope = "vrf"),
+  };
+  for (const sc of aciScenarios) {
+    if (gradeAci(sc.model, sc.endpoints, sc.goals).every((g) => g.ok)) fail(`aci ${sc.id}: already passes before any fix`);
+    if (!aciFixes[sc.id]) fail(`aci ${sc.id}: no reference fix`);
+    const m = structuredClone(sc.model);
+    aciFixes[sc.id]?.(m);
+    for (const g of gradeAci(m, sc.endpoints, sc.goals)) if (!g.ok) fail(`aci ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+  }
+  console.log(`aci    ${aciScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+}
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();

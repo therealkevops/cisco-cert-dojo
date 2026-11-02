@@ -1386,3 +1386,34 @@ h3.display { font-size: 28px; }
 .san-solution { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
 .san-solution pre { background: var(--term-bg); color: var(--term-ink); padding: 10px 14px; border-radius: 5px; font-size: 12px; margin: 0; }
 @media (max-width: 900px) { .san-grid { grid-template-columns: 1fr; } }
+
+/* ACI Policy Lab */
+.page.aci { max-width: 1440px; }
+.aci-grid { display: grid; grid-template-columns: 210px minmax(0, 1fr) minmax(0, 0.95fr); gap: 18px; padding: 20px 0 16px; align-items: start; }
+.aci-tree { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 10px; display: flex; flex-direction: column; gap: 14px; position: sticky; top: 12px; }
+.aci-tree ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.aci-tree button { width: 100%; display: flex; justify-content: space-between; gap: 8px; font: inherit; font-size: 13px; color: var(--ink-2); background: none; border: 0; border-left: 2px solid transparent; padding: 5px 8px; cursor: pointer; text-align: left; }
+.aci-tree button:hover { color: var(--ink); background: var(--panel-hi); }
+.aci-tree button.on { color: var(--ink); border-left-color: var(--amber); background: var(--panel-hi); }
+.aci-tree .num { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.aci-badge { background: var(--red); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+.aci-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.aci-obj { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px 12px; }
+.aci-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 14px; margin-top: 6px; }
+.aci-text { width: 100%; font-family: var(--mono); }
+.aci-empty { color: var(--muted); font-size: 13px; margin: 0; }
+.aci-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.aci-faults { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
+.aci-faults li { display: grid; grid-template-columns: 58px 1fr; gap: 8px; border-left: 3px solid var(--amber); padding-left: 8px; }
+.aci-faults li.critical, .aci-faults li.major { border-left-color: var(--red); }
+.aci-faults li.warning { border-left-color: var(--muted); }
+.aci-faults code { display: block; font-size: 11px; color: var(--muted); word-break: break-all; }
+.aci-eps { font-size: 12px; margin-top: 6px; }
+.aci-tester-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.aci-port { width: 70px; }
+.aci-verdict { margin: 10px 0 0; font-size: 13px; border-left: 3px solid var(--red); padding-left: 10px; }
+.aci-verdict.ok { border-left-color: var(--green); }
+.aci-verdict b { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+.aci-solution { margin: 10px 0 0; padding-left: 20px; font-size: 13px; }
+@media (max-width: 1100px) { .aci-grid { grid-template-columns: 1fr; } .aci-tree { position: static; } }
+.aci-fields label:has(.aci-text) { grid-column: 1 / -1; }

@@ -94,6 +94,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link href="/san" className="hide-sm">
             san
           </Link>
+          <Link href="/aci" className="hide-sm">
+            aci
+          </Link>
           <Link href="/desk" className="hide-sm">
             desk
           </Link>
