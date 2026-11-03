@@ -17,6 +17,9 @@ import { gradeSan } from "../src/lib/san.ts";
 import { runSanCli } from "../src/lib/san-cli.ts";
 import { aciScenarios, baseEndpoints, baseTenant } from "../src/data/aci.ts";
 import { gradeAci, evaluate as evaluateAci } from "../src/lib/aci.ts";
+import { basePair, vpcScenarios } from "../src/data/vpc.ts";
+import { gradeVpc, evaluate as evaluateVpc } from "../src/lib/vpc.ts";
+import { runVpcCli } from "../src/lib/vpc-cli.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -365,6 +368,29 @@ console.log(`san    ${sanScenarios.length} tickets (broken as shipped, CLI refer
     for (const g of gradeAci(m, sc.endpoints, sc.goals)) if (!g.ok) fail(`aci ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
   }
   console.log(`aci    ${aciScenarios.length} scenarios (broken as shipped, fixed by reference)`);
+}
+
+// vPC Lab: the base pair is healthy; each scenario fails as shipped and the CLI reference fix passes.
+{
+  const b = evaluateVpc(basePair());
+  if (!b.adjacency.ok || b.vpcs.some((v) => v.consistency !== "success") || b.legs.some((l) => l.state !== "bundled")) fail("vpc base pair isn't healthy");
+  for (const sc of vpcScenarios) {
+    if (gradeVpc(sc.lab, sc.goals).every((g) => g.ok)) fail(`vpc ${sc.id}: already passes before any fix`);
+    let lab = sc.lab;
+    const before = JSON.stringify(sc.lab);
+    for (const step of sc.solution) {
+      let sess = { sw: step.sw, mode: { m: "exec" } };
+      for (const line of step.lines) {
+        const r = runVpcCli(line, sess, lab);
+        if (r.out.startsWith("%") || r.out.includes("% Invalid")) fail(`vpc ${sc.id}: "${line}" on ${step.sw} → ${r.out.split("\n").pop()}`);
+        sess = r.session;
+        if (r.lab) lab = r.lab;
+      }
+    }
+    if (JSON.stringify(sc.lab) !== before) fail(`vpc ${sc.id}: the CLI mutated the shipped lab`);
+    for (const g of gradeVpc(lab, sc.goals)) if (!g.ok) fail(`vpc ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+  }
+  console.log(`vpc    ${vpcScenarios.length} scenarios (broken as shipped, CLI reference fix passes)`);
 }
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.

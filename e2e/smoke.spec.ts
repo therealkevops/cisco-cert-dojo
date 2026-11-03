@@ -24,6 +24,7 @@ const pages = [
   ["/ucs", "ucs list"],
   ["/san", "san list"],
   ["/aci", "aci list"],
+  ["/vpc", "vpc list"],
 ] as const;
 
 for (const [path, what] of pages) {
