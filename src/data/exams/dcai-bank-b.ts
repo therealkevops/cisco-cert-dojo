@@ -48,10 +48,13 @@ Ethernet1/5        On   On     (8)     1843229    12`,
     id: "d-205",
     objective: "3.1.a",
     kind: "single",
-    prompt: "What does the PFC watchdog do when a no-drop queue stays paused for too long?",
-    choices: ["Ignores PFC on that queue and drops its traffic", "Sends pause frames to every upstream port", "Moves the queue's traffic into a lossy class", "Shuts down the switch port"],
+    prompt: "Refer to the exhibit (log text simplified). What happened on Ethernet1/12?",
+    exhibit: `LEAF2 PFC watchdog: Ethernet1/12 qos-group 3 (no-drop) paused continuously for 200 ms
+LEAF2 PFC watchdog: Ethernet1/12 qos-group 3 queue shut; packets for this queue dropped
+LEAF2 PFC watchdog: Ethernet1/12 qos-group 3 restored after pauses stopped`,
+    choices: ["The watchdog contained a pause storm by dropping that queue", "The switch disabled PFC globally after a buffer overrun", "The NIC on Eth1/12 lost PFC after a DCBX renegotiation", "ECN failed, so the queue was remapped to best effort"],
     answer: 0,
-    explain: "The watchdog breaks the pause storm by no longer honouring PFC on the stuck queue and flushing it, containing the damage to that queue.",
+    explain: "A queue paused for too long points to a stuck receiver. The PFC watchdog drops that queue's traffic so the pauses don't spread through the fabric, then restores it when they stop.",
   },
   {
     id: "d-206",
@@ -89,10 +92,10 @@ Ethernet1/5        On   On     (8)     1843229    12`,
     id: "d-209",
     objective: "3.1.b",
     kind: "single",
-    prompt: "Which field gives ECMP entropy to RoCEv2 traffic between the same two hosts?",
-    choices: ["UDP source port", "UDP destination port", "IP DSCP value", "Destination queue pair number"],
+    prompt: "Two hosts run one RoCEv2 queue pair between them. A capture shows the same IP addresses, UDP destination 4791 and UDP source 49152 on every packet. With four spines, what happens, and which field do NICs vary to spread several QPs?",
+    choices: ["One path only; NICs vary the UDP source port per QP", "All four paths; switches hash the BTH sequence number", "One path only; NICs vary the UDP destination port per QP", "All four paths; switches hash the packet's DSCP value"],
     answer: 0,
-    explain: "The destination port is always 4791. NICs vary the UDP source port per QP so hashing can spread flows; the QP number isn't in the hashed 5-tuple.",
+    explain: "ECMP hashes the 5-tuple, so an unchanged tuple pins the flow to one spine. The destination port is fixed at 4791; NICs put entropy in the UDP source port, per QP.",
   },
   {
     id: "d-210",
@@ -131,10 +134,20 @@ Ethernet1/5        On   On     (8)     1843229    12`,
     id: "d-213",
     objective: "3.1.c",
     kind: "single",
-    prompt: "In NX-OS, which policy type classifies incoming traffic (for example by DSCP) into qos-groups?",
-    choices: ["type network-qos", "type queuing", "type qos", "type control-plane"],
-    answer: 2,
-    explain: "`type qos` policies are applied to interfaces (input) and set the qos-group. Queuing and network-qos then act on that group.",
+    prompt: "Refer to the exhibit. RoCE traffic arriving on Ethernet1/1 is still counted in qos-group 0. What is missing?",
+    exhibit: `class-map type qos match-all ROCE
+  match dscp 26
+policy-map type qos AI-IN
+  class ROCE
+    set qos-group 3
+!
+interface Ethernet1/1
+  mtu 9216
+  priority-flow-control mode on
+  service-policy type queuing output AI-OUT`,
+    choices: ["service-policy type qos input AI-IN on the interface", "service-policy type queuing input AI-IN on the interface", "service-policy type network-qos AI-IN under system qos", "priority-flow-control mode auto instead of mode on"],
+    answer: 0,
+    explain: "The type qos policy classifies by DSCP into qos-groups, but only once it's applied inbound on the interface (or under system qos). Queuing and network-qos policies can't reference it.",
   },
   {
     id: "d-214",
@@ -318,20 +331,23 @@ Ethernet1/5        On   On     (8)     1843229    12`,
   {
     id: "d-232",
     objective: "4.2",
-    kind: "single",
-    prompt: "Which data source shows per-GPU utilisation, memory, temperature and errors?",
-    choices: ["DCGM", "NVML through nvidia-smi only", "Intersight server metrics", "Streaming telemetry from the leaf"],
-    answer: 0,
-    explain: "DCGM exporters feed per-GPU metrics into monitoring stacks. nvidia-smi shows them interactively, Intersight covers server hardware, and switch telemetry can't see inside the GPU.",
+    kind: "multi",
+    prompt: "Which TWO tools report per-GPU utilisation, memory use and temperature?",
+    choices: ["nvidia-smi", "DCGM (dcgmi or dcgm-exporter)", "ib_write_bw", "fio", "show queuing interface"],
+    answer: [0, 1],
+    explain: "nvidia-smi and DCGM read GPU state. ib_write_bw tests RDMA bandwidth, fio tests storage and show queuing reads switch queues.",
   },
   {
     id: "d-233",
     objective: "4.2",
     kind: "single",
-    prompt: "Which Nexus Dashboard capability helps spot short bursts of congestion that average utilisation hides?",
-    choices: ["Microburst detection from streaming telemetry", "Interface utilisation trends from SNMP polling", "Syslog correlation across the fabric switches", "Configuration compliance against fabric intent"],
+    prompt: "Refer to the exhibit (simplified). Collectives through this uplink show jitter, but the link looks lightly loaded. What explains it?",
+    exhibit: `Ethernet1/49   5-minute input rate   88 Gb/s of 400 Gb/s (22%)
+Burst detect (last hour, qos-group 3):
+  events 1,284   longest 180 us   peak queue depth 92% of buffer`,
+    choices: ["Microbursts that the 5-minute average hides", "CRC errors that RoCE silently retransmits", "Hash polarisation of flows onto Eth1/49", "A 4:1 oversubscribed uplink on the leaf"],
     answer: 0,
-    explain: "Microbursts last milliseconds; polled averages hide them, while buffer and queue telemetry reveals them.",
+    explain: "Bursts of a few hundred microseconds fill the queue to 92% while the long-term average is 22%. Polarisation or oversubscription would show high average utilisation.",
   },
   {
     id: "d-234",
@@ -379,10 +395,16 @@ LEAF3# show interface ethernet1/12 | i CRC
     id: "d-238",
     objective: "4.4",
     kind: "single",
-    prompt: "Training throughput collapsed after a spine was replaced. The other spines are healthy. What should you check first on the new spine?",
-    choices: ["No-drop QoS, ECN thresholds and MTU", "Its BGP and OSPF adjacency counts", "The NX-OS release it was shipped with", "Its LLDP neighbours on every port"],
+    prompt: "Refer to the exhibit. Training throughput collapsed after SPINE4 was replaced; the other spines are healthy. What is wrong?",
+    exhibit: `SPINE1# show running-config | section "system qos"
+system qos
+  service-policy type network-qos AI-NQ
+
+SPINE4# show running-config | section "system qos"
+SPINE4#`,
+    choices: ["SPINE4 has no network-qos policy, so no no-drop class", "SPINE4's uplinks use a different ECMP hash seed", "SPINE4 needs a reload before system qos takes effect", "SPINE4 is missing only the ECN thresholds for queue 3"],
     answer: 0,
-    explain: "Replacements often miss fabric-wide QoS and MTU settings, so RoCE crossing them turns lossy while routing still looks healthy.",
+    explain: "Without the network-qos policy SPINE4 has no PFC no-drop class or jumbo MTU for RoCE, so every flow hashed through it suffers drops and retransmissions.",
   },
   {
     id: "d-239",
@@ -426,11 +448,11 @@ LEAF3# show interface ethernet1/12 | i CRC
   {
     id: "d-253",
     objective: "4.2",
-    kind: "single",
-    prompt: "What is the advantage of model-driven streaming telemetry (gNMI, dial-out) over periodic SNMP polling for AI fabrics?",
-    choices: ["Sub-second push of structured data", "Lower CPU load from SNMP traps", "Encryption of data-plane traffic", "Built-in anomaly detection on the switch"],
-    answer: 0,
-    explain: "Devices push only subscribed paths at high frequency in structured form, which congestion analysis needs. Anomaly detection happens in the collector, not the protocol.",
+    kind: "multi",
+    prompt: "Which TWO are advantages of model-driven streaming telemetry over SNMP polling on an AI fabric?",
+    choices: ["Counters pushed every second or on change", "Structured data defined by YANG models", "No collector is needed to receive the data", "No feature needs to be enabled on the switch", "It replaces syslog for every type of event"],
+    answer: [0, 1],
+    explain: "Telemetry streams YANG-modelled data at high frequency or on change. It still needs a collector and has to be enabled on the switch (feature telemetry or gRPC).",
   },
   {
     id: "d-254",
@@ -541,11 +563,11 @@ LEAF2# show queuing interface ethernet1/3 | i "QOS GROUP 3" -A4
   {
     id: "d-246",
     objective: "2.3",
-    kind: "single",
-    prompt: "Why might a separate storage network (or storage VLAN/QoS class) be used in an AI cluster?",
-    choices: ["To keep data loading and checkpoints from competing with other traffic", "Because storage traffic in AI clusters must use FCoE end to end", "Because NFS traffic can't share a VLAN with RoCEv2 traffic", "So that storage traffic can stay at Layer 2 and avoid routing"],
-    answer: 0,
-    explain: "Isolating or prioritising storage traffic gives predictable data loading and checkpoint times.",
+    kind: "multi",
+    prompt: "Which TWO are reasons to give storage traffic its own network or QoS class in an AI cluster?",
+    choices: ["Checkpoint bursts don't congest GPU collectives", "Storage can have its own MTU and lossless settings", "RDMA storage traffic can't be routed at Layer 3", "Storage traffic doesn't need redundant paths", "It removes the need to authenticate storage clients"],
+    answer: [0, 1],
+    explain: "Separation keeps bursty storage I/O from hurting collectives and lets each class be tuned. RoCEv2 storage traffic is routable, and redundancy and authentication still apply.",
   },
   {
     id: "d-247",
@@ -569,10 +591,10 @@ LEAF2# show queuing interface ethernet1/3 | i "QOS GROUP 3" -A4
     id: "d-249",
     objective: "2.5",
     kind: "single",
-    prompt: "Which consideration often makes cloud-to-on-prem data movement expensive?",
-    choices: ["Egress charges", "Ingress charges", "Cross-region replication licences", "Per-request API fees"],
+    prompt: "A team copies a 400 TB dataset out of a cloud region to on-prem every quarter. Egress is billed at $0.05 per GB. Roughly what does each copy cost?",
+    choices: ["About $20,000", "About $2,000", "About $200,000", "Nothing, as long as a private link is used"],
     answer: 0,
-    explain: "Providers usually charge for data leaving the cloud, which can dominate hybrid pipeline costs. Ingress is usually free.",
+    explain: "400,000 GB × $0.05 = $20,000 per copy. Private interconnects lower the rate but don't remove egress charges; the cheaper design keeps training where the data lives.",
   },
   {
     id: "d-250",

@@ -22,10 +22,16 @@ export const dcaiBankD: Question[] = [
     id: "d-502",
     objective: "3.1.a",
     kind: "single",
-    prompt: "What is 'congestion spreading' in a PFC fabric?",
-    choices: ["Pauses propagate upstream and stall unrelated flows", "ECN marks spread from the RoCE class to other classes", "A congested link triggers rerouting across the fabric", "Senders reduce their rate across every QP"],
+    prompt: "Refer to the exhibit (PFC pause counters on the no-drop class). Only Node7 has a problem. Why are Leaf1's uplinks being paused?",
+    exhibit: `Device  Interface  Peer     RxPause  TxPause
+Leaf3   Eth1/7     Node7     52,004        0
+Leaf3   Eth1/49    Spine1         0   48,190
+Spine1  Eth1/3     Leaf3     48,210        0
+Spine1  Eth1/1     Leaf1          0   31,550
+Leaf1   Eth1/49    Spine1    31,550        0`,
+    choices: ["Node7's pauses spread hop by hop back toward the senders", "Leaf1 is the congestion point and is pausing Spine1", "Spine1 has a buffer fault that pauses all of its leaves", "Leaf3's watchdog is generating pauses toward Spine1"],
     answer: 0,
-    explain: "A paused queue fills its upstream buffers, which pause their neighbours; innocent flows sharing those queues suffer head-of-line blocking.",
+    explain: "Node7 pauses Leaf3; Leaf3's buffer fills and it pauses Spine1; Spine1 then pauses Leaf1. Leaf1 receives pauses (Rx), it doesn't send them. This is congestion spreading.",
   },
   {
     id: "d-503",
@@ -164,10 +170,16 @@ policy-map type qos RoCE-QOS
     id: "d-526",
     objective: "3.1.c",
     kind: "single",
-    prompt: "Why must the no-drop class's MTU be large enough for RoCE frames?",
-    choices: ["Larger frames in that class are dropped", "The PFC pause quanta depend on it", "ECN thresholds are set in multiples of it", "DCBX advertises it to the hosts"],
+    prompt: "Refer to the exhibit. The hosts use a 4096-byte RoCE MTU in the no-drop class. What happens to their traffic?",
+    exhibit: `policy-map type network-qos AI-NQ
+  class type network-qos c-8q-nq3
+    pause pfc-cos 3
+    mtu 1500
+  class type network-qos c-8q-nq-default
+    mtu 9216`,
+    choices: ["Frames above 1,500 bytes in the no-drop class are dropped", "The switch fragments the frames; the NIC reassembles them", "The frames move to the default class and use MTU 9216", "The RoCE MTU is renegotiated down to 1,024 automatically"],
     answer: 0,
-    explain: "The network-qos policy sets MTU per class. Jumbo RoCE frames need 9216 there and on interfaces, or they're dropped.",
+    explain: "The class MTU applies to every frame in qos-group 3; a 4 KB RoCE payload plus headers exceeds 1,500 and is dropped. Switches don't fragment Ethernet frames, and RoCE doesn't negotiate MTU with the switch.",
   },
 
   // 3.1.d Load distribution
@@ -184,10 +196,12 @@ policy-map type qos RoCE-QOS
     id: "d-532",
     objective: "3.1.d",
     kind: "single",
-    prompt: "What is 'hash polarisation'?",
-    choices: ["Successive tiers make the same hash choice", "One link carries all traffic after a failure", "Flows alternate between two paths", "The hash ignores the UDP source port"],
+    prompt: "Refer to the exhibit. Traffic is spread evenly over the leaf uplinks, but Spine1 sends almost everything to one super-spine. What is this, and what is the fix?",
+    exhibit: `Leaf1  uplinks to spines:        Eth1/49 26%  Eth1/50 24%  Eth1/51 25%  Eth1/52 25%
+Spine1 uplinks to super-spines:  Eth1/1  97%  Eth1/2   1%  Eth1/3   1%  Eth1/4   1%`,
+    choices: ["Hash polarisation; use a different hash seed per tier", "An elephant flow; enable per-packet spraying on leaves", "Failed links; check optics on Spine1 Eth1/2 to 1/4", "ECMP is off on Spine1; raise its maximum-paths value"],
     answer: 0,
-    explain: "If leaf and spine use the same hash inputs and seed, flows that took one path at the leaf map to the same next hop again. Vary the seed per tier.",
+    explain: "Flows that reached Spine1 already share a hash result; the same hash at the next tier sends them all one way. Changing the seed or algorithm per tier breaks the correlation. The 1% links are up and carrying traffic.",
   },
   {
     id: "d-533",
@@ -246,10 +260,15 @@ Eth1/52   uplink  SPINE4   2.8% tx`,
     id: "d-541",
     objective: "3.2",
     kind: "single",
-    prompt: "In Intersight, which policy enables RoCE on a vNIC and sets queue pairs, memory regions and the RoCE version?",
-    choices: ["Ethernet Adapter policy", "Ethernet QoS policy", "LAN Connectivity policy", "Ethernet Network Control policy"],
+    prompt: "Refer to the exhibit. On the host, rdma link shows no RoCE device for eth2. What must change in Intersight?",
+    exhibit: `LAN Connectivity Policy: AI-LAN
+  vNIC eth2  Fabric A  PCI order 2
+    Ethernet Adapter Policy : Linux-Default
+    Ethernet QoS Policy     : Platinum-9000 (MTU 9000, CoS 5)
+    Ethernet Network Group  : VLAN 300`,
+    choices: ["Enable RoCE settings in eth2's Ethernet adapter policy", "Lower the QoS policy's MTU from 9000 to 1500", "Move eth2 from Fabric A to Fabric B", "Add VLAN 300 to the Ethernet network control policy"],
     answer: 0,
-    explain: "The adapter policy holds RoCE settings with queues and RSS. QoS sets class and MTU, LAN connectivity lists the vNICs, and network control sets CDP/LLDP.",
+    explain: "RDMA over Converged Ethernet, its version, queue pairs and memory regions are set in the Ethernet adapter policy. Linux-Default doesn't enable them.",
   },
   {
     id: "d-542",
@@ -337,10 +356,10 @@ Eth1/52   uplink  SPINE4   2.8% tx`,
     id: "d-553",
     objective: "3.3",
     kind: "single",
-    prompt: "In ACI, which object controls which EPGs may talk to each other?",
-    choices: ["Contracts", "Bridge domains", "VRFs", "Application profiles"],
+    prompt: "In ACI, EPG Training and EPG Storage sit in the same enforced VRF. Both EPGs learn endpoints, but training hosts can't reach the NFS servers in Storage. What is missing?",
+    choices: ["A contract provided by Storage and consumed by Training", "A route leak between the two EPGs' bridge domains", "An L3Out connecting the Training EPG to Storage", "The same VLAN encapsulation on both EPGs' ports"],
     answer: 0,
-    explain: "ACI is allow-list: EPGs need a contract to communicate. VRFs and bridge domains provide routing and L2 context.",
+    explain: "In an enforced VRF, EPGs can't talk without a contract. Route leaking is for different VRFs, and L3Outs connect to external networks.",
   },
   {
     id: "d-554",
@@ -393,10 +412,13 @@ Eth1/52   uplink  SPINE4   2.8% tx`,
     id: "d-562",
     objective: "4.1",
     kind: "single",
-    prompt: "Which tool measures storage throughput and IOPS with configurable block sizes and patterns?",
-    choices: ["fio", "dd", "iostat", "IOR"],
+    prompt: "Refer to the exhibit. Each of 64 nodes writes its share of a 2 TB checkpoint at once. The storage system's aggregate write limit is 120 GB/s. About how long does the checkpoint take?",
+    exhibit: `$ fio --name=ckpt --rw=write --bs=1M --size=20G --numjobs=8 --direct=1
+...
+  WRITE: bw=6.2GiB/s (6.6GB/s), io=160GiB, run=25806msec`,
+    choices: ["About 17 s, limited by the 120 GB/s storage system", "About 5 s, limited by each node's 6.6 GB/s", "About 5 minutes, limited by one node's 6.6 GB/s", "About 2 s, because direct I/O bypasses the storage"],
     answer: 0,
-    explain: "fio simulates random or sequential I/O at chosen block sizes and queue depths. dd is crude, iostat only observes, and IOR targets parallel file systems with MPI.",
+    explain: "64 nodes × 6.6 GB/s is about 420 GB/s of demand, so the 120 GB/s storage system is the bottleneck: 2,000 GB ÷ 120 GB/s ≈ 17 s.",
   },
   {
     id: "d-563",
@@ -498,10 +520,14 @@ Eth1/52   uplink  SPINE4   2.8% tx`,
     id: "d-581",
     objective: "4.3",
     kind: "single",
-    prompt: "Which syslog severity level is the most severe?",
-    choices: ["0 (emergencies)", "1 (alerts)", "2 (critical)", "7 (debugging)"],
+    prompt: "Refer to the exhibit (log text simplified). Which message has the highest severity?",
+    exhibit: `%ETHPORT-5-IF_DOWN_LINK_FAILURE: Interface Ethernet1/7 is down (Link failure)
+%PLATFORM-2-PS_FAIL: Power supply 2 failed or shut down
+%FAN-4-FAN_SPEED_HIGH: Fan tray 3 running above normal speed
+%ETHPORT-3-IF_ERROR: Interface Ethernet1/9 error-disabled`,
+    choices: ["The power supply failure", "The link failure on Eth1/7", "The fan speed warning", "The error-disable on Eth1/9"],
     answer: 0,
-    explain: "Severity runs 0 to 7, and lower is more severe.",
+    explain: "The number after the facility is the severity, and lower is worse: 2 (critical) beats 3 (error), 4 (warning) and 5 (notification).",
   },
   {
     id: "d-582",

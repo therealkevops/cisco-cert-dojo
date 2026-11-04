@@ -8,10 +8,10 @@ export const dcaiBankA: Question[] = [
     id: "d-101",
     objective: "1.1",
     kind: "single",
-    prompt: "Which collective operation is most common in data-parallel training to combine gradients from every GPU?",
-    choices: ["All-reduce", "All-gather", "Reduce-scatter", "Broadcast"],
+    prompt: "A team trains a 13B model with data parallelism on 32 GPUs in four servers. At the end of every step each GPU must hold the sum of all 32 GPUs' gradients. Which collective does the framework issue, and over which network?",
+    choices: ["All-reduce, over the back-end RDMA fabric", "All-gather, over the front-end network", "Broadcast from rank 0, over the back-end fabric", "Reduce-scatter, over the storage network"],
     answer: 0,
-    explain: "All-reduce sums every GPU's gradients and returns the result to all of them. Reduce-scatter and all-gather are the two halves NCCL's ring algorithm uses to build it; broadcast only distributes one rank's data.",
+    explain: "All-reduce leaves every rank with the combined gradients. Between servers it runs over the back-end RDMA fabric. Reduce-scatter alone leaves each rank with only a slice of the sum.",
   },
   {
     id: "d-102",
@@ -35,29 +35,38 @@ export const dcaiBankA: Question[] = [
     id: "d-104",
     objective: "1.1",
     kind: "single",
-    prompt: "In a RAG pipeline, what is stored in the vector database?",
-    choices: ["Embeddings of document chunks", "The LLM's attention key/value cache", "Tokenised training samples", "Fine-tuned adapter weights"],
+    prompt: "Refer to the exhibit. What happens in step 2 of this RAG ingestion pipeline?",
+    exhibit: `1  Split policy PDFs into 512-token chunks
+2  ????????  ->  write to vector database
+3  User question -> embed -> top-k similarity search
+4  Retrieved chunks + question -> LLM prompt`,
+    choices: ["Each chunk is run through an embedding model; the vectors are stored with the text", "The LLM is fine-tuned on each chunk; the updated weights are stored", "Each chunk is tokenised; the token IDs are stored for the LLM to read", "The LLM summarises each chunk; the summaries are stored for retrieval"],
     answer: 0,
-    explain: "Chunks are embedded and indexed; at query time the nearest chunks are retrieved and added to the prompt. The KV cache lives in GPU memory, and adapters are model weights.",
+    explain: "The vector database holds embeddings (plus the source text) so step 3 can find chunks similar to the embedded question. RAG doesn't change the model's weights.",
   },
   {
     id: "d-105",
     objective: "1.1",
-    kind: "single",
-    prompt: "Compared with training a model from scratch, fine-tuning a pretrained model typically needs what?",
-    choices: ["Far less data and compute than pre-training", "About the same compute, but less data", "More data, because the model must be relearned", "Less compute, but the full pre-training dataset"],
-    answer: 0,
-    explain: "Fine-tuning (including LoRA) reuses learned weights and trains on a small, task-specific dataset, so both data and compute shrink.",
+    kind: "multi",
+    prompt: "A team adapts a pretrained 8B model to legal contracts instead of training a model from scratch. Which TWO statements are true?",
+    choices: ["Far less data and GPU time are needed", "The pretrained weights are the starting point", "A larger cluster is needed than for pretraining", "The tokenizer must be trained again from zero", "The model's general language skills are discarded"],
+    answer: [0, 1],
+    explain: "Fine-tuning starts from the pretrained weights and needs a small fraction of the data and compute; the tokenizer and general knowledge are kept.",
   },
   // 1.2 lifecycle
   {
     id: "d-106",
     objective: "1.2",
     kind: "single",
-    prompt: "A deployed model's accuracy degrades over months because real-world data has shifted. What is this called?",
-    choices: ["Data drift", "Overfitting", "Catastrophic forgetting", "Underfitting"],
+    prompt: "Refer to the exhibit. A fraud model trained on last year's data hasn't changed since deployment. What is happening, and what is the usual response?",
+    exhibit: `Month  Accuracy (labelled sample)  Mean txn_amount
+Jan    94.1%                       EUR 48
+Mar    93.8%                       EUR 51
+May    89.0%                       EUR 77
+Jul    84.6%                       EUR 96`,
+    choices: ["Data drift; retrain on recent labelled data", "Overfitting; add dropout, retrain on the same data", "Underfitting; move to a larger architecture", "Quantisation loss; redeploy the model at FP16"],
     answer: 0,
-    explain: "The world changed, not the model. Overfitting is poor generalisation from the start; catastrophic forgetting happens when further training overwrites earlier skills.",
+    explain: "The input distribution has moved away from the training data and accuracy is falling with it: data drift. The usual fix is retraining on recent data, triggered by monitoring.",
   },
   {
     id: "d-107",
@@ -71,11 +80,11 @@ export const dcaiBankA: Question[] = [
   {
     id: "d-108",
     objective: "1.2",
-    kind: "single",
-    prompt: "What does MLOps bring to the AI lifecycle?",
-    choices: ["Versioned, automated and monitored model pipelines", "Faster training through mixed-precision arithmetic", "Larger models through parameter sharding across GPUs", "Automatic data labelling at production scale"],
-    answer: 0,
-    explain: "MLOps applies DevOps practice (versioning, CI/CD, monitoring, reproducibility) to data and models. The other options are techniques, not lifecycle practices.",
+    kind: "multi",
+    prompt: "Which TWO practices does MLOps bring to the AI lifecycle?",
+    choices: ["Automated, tested pipelines from data to deployment", "Tracking dataset, code and model versions together", "Replacing validation sets with live production traffic", "Retraining only when a model's source code changes", "Running training and inference on the same cluster"],
+    answer: [0, 1],
+    explain: "MLOps applies CI/CD and versioning to models. Validation still happens before release, and retraining is triggered by data and performance changes, not just code.",
   },
   // 1.3 infra types
   {
@@ -91,10 +100,10 @@ export const dcaiBankA: Question[] = [
     id: "d-110",
     objective: "1.4",
     kind: "single",
-    prompt: "When does on-premises GPU infrastructure usually become cheaper than renting cloud GPUs?",
-    choices: ["When GPUs are highly utilised over several years", "When jobs are short and bursty", "When the newest GPU generation is needed immediately", "When the team has no data centre space"],
+    prompt: "A team keeps 64 rented cloud GPUs busy around the clock (730 hours a month) at $2.50 per GPU-hour. Equivalent servers would cost $2.4M to buy plus $35k a month to run. Over three years, which is cheaper?",
+    choices: ["On-prem: about $3.7M against about $4.2M for cloud", "Cloud: about $3.7M against about $4.2M for on-prem", "Neither: both come to about $4.2M over three years", "Cloud: about $2.9M against about $3.7M for on-prem"],
     answer: 0,
-    explain: "Sustained utilisation amortises capital cost and avoids egress fees. Bursty demand, instant access to new GPUs and lack of space all favour cloud.",
+    explain: "Cloud: 64 × $2.50 × 730 = $116,800 a month, about $4.2M over 36 months. On-prem: $2.4M + 36 × $35k = $3.66M. High, steady utilisation is what tips the balance to owning.",
   },
   {
     id: "d-111",
@@ -110,19 +119,35 @@ export const dcaiBankA: Question[] = [
     id: "d-112",
     objective: "1.5",
     kind: "single",
-    prompt: "In Kubernetes, which component makes GPUs schedulable resources for pods?",
-    choices: ["A GPU device plugin", "The kube-scheduler alone", "A CNI plugin", "The Container Storage Interface driver"],
+    prompt: "Refer to the exhibit. The pod stays Pending with 'Insufficient nvidia.com/gpu', although the node has eight idle GPUs. What is most likely missing on the node?",
+    exhibit: `apiVersion: v1
+kind: Pod
+metadata:
+  name: trainer
+spec:
+  containers:
+  - name: trainer
+    image: nvcr.io/nvidia/pytorch:24.05-py3
+    resources:
+      limits:
+        nvidia.com/gpu: 2`,
+    choices: ["The NVIDIA device plugin (for example via the GPU Operator)", "A PersistentVolumeClaim for the training dataset", "A Slurm partition that maps the node's GPUs", "SR-IOV virtual functions for the node's GPU NICs"],
     answer: 0,
-    explain: "The device plugin (often installed by the GPU Operator) advertises GPUs as an extended resource so pods can request them. The scheduler can only place what a plugin has advertised; CNI and CSI handle networking and storage.",
+    explain: "Kubernetes only schedules nvidia.com/gpu if the device plugin advertises it on the node. Without it the node's allocatable GPU count is zero.",
   },
   {
     id: "d-113",
     objective: "1.5",
     kind: "single",
-    prompt: "What is the role of Slurm in many AI training clusters?",
-    choices: ["A batch workload manager", "A parallel file system", "A collective communication library", "A container runtime"],
+    prompt: "Refer to the exhibit. What does Slurm do with this job?",
+    exhibit: `#!/bin/bash
+#SBATCH --nodes=4
+#SBATCH --gres=gpu:8
+#SBATCH --ntasks-per-node=8
+srun python train.py`,
+    choices: ["Waits for 4 nodes with 8 free GPUs each, then starts 32 tasks", "Starts 8 tasks as soon as any 8 GPUs in the cluster are free", "Starts 4 tasks, one per node, that share 8 GPUs between them", "Starts 32 tasks on as many nodes as have a free GPU"],
     answer: 0,
-    explain: "Slurm queues and schedules jobs across nodes and GPUs. Lustre/GPFS are parallel file systems, NCCL is the collectives library, and containerd/Enroot are runtimes.",
+    explain: "Slurm allocates all four nodes with eight GPUs each before launching, then srun starts 8 tasks per node: 32 ranks, one per GPU.",
   },
   {
     id: "d-114",
@@ -136,11 +161,11 @@ export const dcaiBankA: Question[] = [
   {
     id: "d-115",
     objective: "1.5",
-    kind: "single",
-    prompt: "What does NVMe over Fabrics provide?",
-    choices: ["Remote NVMe storage access over a network fabric", "Direct DMA from local storage into GPU memory", "RDMA between GPUs that sit on different servers", "Block storage over SCSI commands encapsulated in IP"],
-    answer: 0,
-    explain: "NVMe-oF carries the NVMe command set over RDMA, TCP or FC. GPUDirect Storage is the DMA path into GPU memory; GPUDirect RDMA is GPU-to-GPU; iSCSI carries SCSI.",
+    kind: "multi",
+    prompt: "Which TWO are NVMe over Fabrics transports?",
+    choices: ["NVMe/TCP", "NVMe over RDMA (RoCE)", "NVMe over SAS", "NVMe over iSCSI", "NVMe over SMB"],
+    answer: [0, 1],
+    explain: "NVMe-oF runs over TCP, RDMA (RoCE, InfiniBand) and Fibre Channel. SAS, iSCSI and SMB are other storage protocols.",
   },
   {
     id: "d-116",
@@ -219,20 +244,20 @@ export const dcaiBankA: Question[] = [
   {
     id: "d-124",
     objective: "2.1",
-    kind: "single",
-    prompt: "Why are front-end and back-end networks usually kept physically separate in AI clusters?",
-    choices: ["To isolate GPU collectives from bursty storage and user traffic", "Because RoCEv2 can't be routed across a Layer 3 front-end", "Because the back-end must run InfiniBand rather than Ethernet", "To allow jumbo frames on one network and 1500 bytes on the other"],
-    answer: 0,
-    explain: "Isolation protects job completion time and lets the back-end be tuned for lossless RoCE. RoCEv2 is routable, back-ends are often Ethernet, and MTU alone wouldn't need separate hardware.",
+    kind: "multi",
+    prompt: "Which TWO are reasons to keep the front-end and back-end networks of an AI cluster separate?",
+    choices: ["User and storage traffic can't slow GPU collectives", "Lossless RoCE tuning stays confined to the back-end", "Back-end switches can't route IP traffic at all", "Front-end networks can't carry any RDMA traffic", "It halves the number of NICs in each GPU server"],
+    answer: [0, 1],
+    explain: "Separation isolates collectives from other traffic and keeps PFC/ECN tuning in one place. Both networks route IP, front-ends can carry RDMA storage, and separation adds NICs.",
   },
   {
     id: "d-125",
     objective: "2.1",
     kind: "single",
-    prompt: "What does 'radix' mean when choosing switches for a large AI fabric?",
-    choices: ["The number of ports per switch", "The maximum port speed", "The shared packet buffer size", "The number of switching ASICs per chassis"],
+    prompt: "You need a non-blocking two-tier fabric for 4,096 GPUs, one 400G port each. Switch A has 64 × 400G ports; switch B has 128 × 400G. Why can B do it in two tiers when A can't?",
+    choices: ["Two tiers of 64-port switches top out at 2,048 GPUs; 128 ports reach 8,192", "64-port switches can't run ECMP across more than 32 spines", "128-port switches have lower per-hop latency, so more GPUs fit", "64-port fabrics need a super-spine above 1,024 GPUs"],
     answer: 0,
-    explain: "Higher radix connects more endpoints per tier, so large fabrics need fewer tiers, hops and cables.",
+    explain: "A non-blocking two-tier Clos supports radix² / 2 hosts: 64²/2 = 2,048 and 128²/2 = 8,192. Higher radix means fewer tiers, hops and optics.",
   },
   {
     id: "d-126",
@@ -266,10 +291,17 @@ export const dcaiBankA: Question[] = [
     id: "d-129",
     objective: "2.2",
     kind: "single",
-    prompt: "Why place each GPU and its back-end NIC under the same PCIe switch or NUMA node?",
-    choices: ["So RDMA traffic doesn't cross the CPU interconnect", "So the GPU can use the NIC's onboard memory as cache", "Because SR-IOV only works within a single NUMA node", "So the NIC and GPU can share one PCIe power budget"],
+    prompt: "Refer to the exhibit (nvidia-smi topo -m, trimmed). A job's settings send GPU0's RDMA traffic through NIC1. What is the effect, and the fix?",
+    exhibit: `        GPU0  GPU1  NIC0  NIC1   CPU Affinity  NUMA
+GPU0     X    NV18  PIX   SYS    0-47          0
+GPU1    NV18   X    SYS   PIX    48-95         1
+NIC0    PIX   SYS    X    SYS
+NIC1    SYS   PIX   SYS    X
+
+PIX = single PCIe bridge   SYS = crosses the CPU interconnect`,
+    choices: ["Traffic crosses the CPU interconnect; use NIC0, on GPU0's PCIe switch", "Traffic reaches NIC1 over NVLink, so there's no real effect", "SYS paths are faster for GPUDirect RDMA than PIX; keep NIC1", "NIC1 can't reach GPU0 at all, so the job fails to start"],
     answer: 0,
-    explain: "GPUDirect RDMA works best when NIC and GPU share a PCIe switch; crossing sockets adds latency and limits bandwidth.",
+    explain: "PIX means GPU0 and NIC0 share a PCIe switch, so GPUDirect RDMA stays local. GPU0 to NIC1 is SYS: it crosses sockets, adding latency and cutting bandwidth.",
   },
   {
     id: "d-130",
@@ -312,10 +344,14 @@ export const dcaiBankA: Question[] = [
     id: "d-134",
     objective: "2.3",
     kind: "single",
-    prompt: "GPU utilisation drops to 40% during training while storage read latency spikes. What is the likely bottleneck?",
-    choices: ["The data pipeline can't feed batches fast enough", "The GPUs are thermally throttling under sustained load", "The back-end fabric is congested between the nodes", "The batch size is too large for the GPUs' memory"],
+    prompt: "Refer to the exhibit. What is the most likely cause of the drop in GPU utilisation?",
+    exhibit: `time    GPU util  storage read latency  read MB/s per node
+10:00   96%       0.6 ms                1,850
+10:05   41%       14.2 ms               610
+10:10   38%       15.8 ms               580`,
+    choices: ["Storage can't feed the data loaders; GPUs wait on I/O", "The GPUs are thermally throttling and lowering clocks", "PFC pauses on the back-end are slowing the collectives", "The job is writing a checkpoint to the same storage"],
     answer: 0,
-    explain: "Low utilisation that lines up with storage latency points at starved GPUs. Throttling shows in clocks, fabric congestion in collectives, and an oversized batch fails with out-of-memory.",
+    explain: "Read latency rises 25-fold while read throughput falls and the GPUs go idle: the input pipeline is starving them. A checkpoint would show write bursts, not read latency.",
   },
   {
     id: "d-135",

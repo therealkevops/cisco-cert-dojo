@@ -464,6 +464,26 @@ for (const id of LENGTH_LINT) {
   console.log(`lint   ${id}: correct answer longest in ${Math.round((100 * longest) / singles)}% of single-answer items`);
 }
 
+// Question shape: real exams lean on exhibits, scenarios and "choose two". At least 20% of each listed
+// exam's items must carry an exhibit or a scenario stem (120+ characters), and at least 10% must be
+// multi-answer. Every "Refer to the exhibit" prompt needs an exhibit, and every exhibit needs that cue.
+const SHAPE_LINT = ["dcai"];
+for (const exam of Object.values(exams)) {
+  for (const q of exam.questions) {
+    const cue = /refer to the exhibit/i.test(q.prompt);
+    if (cue && !q.exhibit) fail(`${q.id}: prompt refers to an exhibit but has none`);
+    if (q.exhibit && !cue && q.kind !== "cli") fail(`${q.id}: has an exhibit but the prompt doesn't refer to it`);
+  }
+}
+for (const id of SHAPE_LINT) {
+  const qs = exams[id].questions;
+  const scenario = qs.filter((q) => (q.kind === "single" || q.kind === "multi") && (q.exhibit || q.prompt.length >= 120)).length;
+  const multi = qs.filter((q) => q.kind === "multi").length;
+  if (scenario / qs.length < 0.2) fail(`${id}: only ${Math.round((100 * scenario) / qs.length)}% of items are exhibit or scenario based`);
+  if (multi / qs.length < 0.1) fail(`${id}: only ${Math.round((100 * multi) / qs.length)}% of items are choose-two`);
+  console.log(`shape  ${id}: ${Math.round((100 * scenario) / qs.length)}% exhibit/scenario, ${Math.round((100 * multi) / qs.length)}% choose-two`);
+}
+
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();
 for (const e of worksheets) {

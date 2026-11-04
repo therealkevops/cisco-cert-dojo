@@ -64,19 +64,24 @@ export const dcaiBankC: Question[] = [
     id: "d-311",
     objective: "1.2",
     kind: "single",
-    prompt: "Why does a training job write checkpoints?",
-    choices: ["To resume from the last saved state after a failure", "To release GPU memory between training epochs", "To share weights between the data-parallel ranks", "To publish intermediate models for users to test"],
+    prompt: "A 512-GPU training job runs for three weeks. A node fails on day 9, and the team loses only about 40 minutes of progress. What made that possible?",
+    choices: ["Periodic checkpoints that the job restarted from", "The model registry restoring the latest weights", "All-reduce rebuilding the failed node's state", "The scheduler live-migrating the job to a spare node"],
     answer: 0,
-    explain: "Large jobs run for days on thousands of components; checkpoints bound the work lost to any failure. Ranks share gradients through collectives, not checkpoints.",
+    explain: "Checkpoints save model and optimiser state at intervals; after a failure the job restarts from the latest one. The checkpoint interval bounds the lost work.",
   },
   {
     id: "d-312",
     objective: "1.2",
     kind: "single",
-    prompt: "A model scores well on the training data but poorly on new data. Which lifecycle stage should have caught this?",
-    choices: ["Evaluation on held-out data", "Data preparation and cleaning", "Hyperparameter tuning runs", "Production monitoring"],
+    prompt: "Refer to the exhibit. What is happening, and which checkpoint should the team keep?",
+    exhibit: `epoch  train_loss  val_loss
+  1      1.92        1.95
+  5      0.84        0.97
+ 10      0.31        1.12
+ 15      0.09        1.48`,
+    choices: ["Overfitting; keep the checkpoint from about epoch 5", "Underfitting; keep training well past epoch 15", "Data drift; keep the checkpoint from epoch 15", "A learning-rate spike; keep the epoch 1 checkpoint"],
     answer: 0,
-    explain: "This is overfitting. Evaluating on held-out validation and test sets before deployment exposes it; monitoring would only catch it after users do.",
+    explain: "Training loss keeps falling while validation loss turns upward after epoch 5: the model is memorising the training set. Early stopping keeps the checkpoint with the lowest validation loss.",
   },
   {
     id: "d-313",
@@ -91,10 +96,10 @@ export const dcaiBankC: Question[] = [
     id: "d-314",
     objective: "1.2",
     kind: "single",
-    prompt: "What does model quantisation do before deployment?",
-    choices: ["Lowers weight precision to save memory", "Removes unimportant weights entirely", "Trains a smaller model to mimic a larger one", "Merges adapter weights into the base model"],
+    prompt: "A 70B model needs about 140 GB for its weights in FP16 and must fit on two 80 GB GPUs together with its KV cache. What is the usual step before deployment?",
+    choices: ["Quantise the weights to FP8 or INT8 (about 70 GB)", "Prune the tokenizer vocabulary to shrink the model", "Shard the weights across both GPUs in FP32", "Move the KV cache into the model's weights"],
     answer: 0,
-    explain: "Quantisation stores weights at lower precision (FP8, INT4). Removing weights is pruning, training a smaller copy is distillation, and merging adapters is a LoRA step.",
+    explain: "8-bit weights halve the footprint to about 70 GB, leaving room for KV cache across 160 GB. FP32 would double the weights to 280 GB.",
   },
   {
     id: "d-315",
@@ -555,11 +560,11 @@ export const dcaiBankC: Question[] = [
   {
     id: "d-404",
     objective: "2.4",
-    kind: "single",
-    prompt: "Which approach reduces the carbon footprint of AI training without changing the hardware?",
-    choices: ["Carbon-aware scheduling of flexible jobs", "Running GPUs at maximum clocks to finish sooner", "Raising the data hall temperature setpoint only", "Moving jobs to the cheapest cloud region"],
-    answer: 0,
-    explain: "Shifting flexible work to cleaner energy windows or regions cuts carbon without new hardware. Cheapest isn't greenest, and max clocks raise energy per job.",
+    kind: "multi",
+    prompt: "Which TWO reduce the carbon footprint of AI training without changing the hardware?",
+    choices: ["Scheduling jobs when grid carbon intensity is low", "Mixed precision to cut the GPU hours per run", "Disabling power capping so jobs finish sooner", "Repeating each run with several random seeds", "Lowering the cold-aisle temperature setpoint"],
+    answer: [0, 1],
+    explain: "Carbon-aware scheduling and fewer GPU hours both cut emissions. A colder setpoint raises cooling energy, and extra runs add GPU hours.",
   },
 
   // 2.5 Hybrid
