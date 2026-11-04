@@ -22,6 +22,13 @@ export type MockResult = {
   pct: number;
   total: number;
   byDomain: Record<string, number>; // domain id -> pct
+  /** "weak" = weak-spot practice draw; absent on older results = full blueprint draw. */
+  kind?: "full" | "weak";
+  /** objective id -> [right, asked] */
+  byObjective?: Record<string, [number, number]>;
+  /** milliseconds actually used */
+  timeUsed?: number;
+  unanswered?: number;
 };
 
 export type Progress = {

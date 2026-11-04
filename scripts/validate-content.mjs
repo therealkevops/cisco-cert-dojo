@@ -23,6 +23,7 @@ import { runVpcCli } from "../src/lib/vpc-cli.ts";
 import { baseFabric, evpnScenarios } from "../src/data/evpn.ts";
 import { gradeEvpn, ping as evpnPing } from "../src/lib/evpn.ts";
 import { runEvpnCli } from "../src/lib/evpn-cli.ts";
+import { drawBlueprint } from "../src/lib/mock.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -419,6 +420,24 @@ console.log(`san    ${sanScenarios.length} tickets (broken as shipped, CLI refer
   }
   console.log(`evpn   ${evpnScenarios.length} scenarios (broken as shipped, CLI reference fix passes)`);
 }
+
+// Mock draws: full-length blueprint draws hit the item count, have no duplicates, match each domain's
+// weight to within one item, and cover every objective whenever the domain's share allows it.
+for (const exam of Object.values(exams)) {
+  const n = Math.min(exam.approxItems, exam.questions.length);
+  for (const seed of ["a", "b", "c"]) {
+    const qs = drawBlueprint(exam, n, seed);
+    if (qs.length !== n) fail(`mock ${exam.id}: drew ${qs.length} of ${n}`);
+    if (new Set(qs.map((q) => q.id)).size !== qs.length) fail(`mock ${exam.id}: duplicate items in a draw`);
+    for (const d of exam.domains) {
+      const got = qs.filter((q) => d.objectives.some((o) => o.id === q.objective)).length;
+      const want = (n * d.weight) / 100;
+      if (Math.abs(got - want) > 1.5) fail(`mock ${exam.id}: domain ${d.id} drew ${got}, expected ~${want.toFixed(1)}`);
+      if (want >= d.objectives.length) for (const o of d.objectives) if (!qs.some((q) => q.objective === o.id)) fail(`mock ${exam.id}: objective ${o.id} missing from a full draw`);
+    }
+  }
+}
+console.log("mock   blueprint draws match domain weights and cover every objective");
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();
