@@ -201,10 +201,16 @@ for intf in ["Gi1", "Gi2", "Lo0", "Gi3"]:
     id: "e-421",
     objective: "6.1",
     kind: "single",
-    prompt: "Which Python construct prevents a script from crashing when a device is unreachable?",
-    choices: ["if __name__ == '__main__'", "try / except", "import", "lambda"],
-    answer: 1,
-    explain: "Catch the connection exception, log it and continue with the next device.",
+    prompt: "Refer to the exhibit. 10.0.0.1 is down. What happens, and what is the usual fix?",
+    exhibit: `from netmiko import ConnectHandler
+
+for host in ["10.0.0.1", "10.0.0.2"]:
+    conn = ConnectHandler(device_type="cisco_xe", host=host,
+                          username=user, password=pw)
+    print(conn.send_command("show version"))`,
+    choices: ["The script stops with an exception; wrap the connect in try/except", "It skips 10.0.0.1 automatically and moves straight on to 10.0.0.2", "It retries 10.0.0.1 forever; add a timeout to the connect", "It prints an empty string for 10.0.0.1 and continues"],
+    answer: 0,
+    explain: "An unreachable host raises an exception that ends the loop. try/except lets the script log the failure and move on to the next device.",
   },
   {
     id: "e-422",

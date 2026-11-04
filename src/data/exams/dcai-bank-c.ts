@@ -79,7 +79,7 @@ export const dcaiBankC: Question[] = [
   5      0.84        0.97
  10      0.31        1.12
  15      0.09        1.48`,
-    choices: ["Overfitting; keep the checkpoint from about epoch 5", "Underfitting; keep training well past epoch 15", "Data drift; keep the checkpoint from epoch 15", "A learning-rate spike; keep the epoch 1 checkpoint"],
+    choices: ["Overfitting; keep the checkpoint from about epoch 5", "Underfitting; keep training well past epoch 15", "Data drift; keep the checkpoint from epoch 15", "A learning-rate spike; keep the checkpoint from epoch 1"],
     answer: 0,
     explain: "Training loss keeps falling while validation loss turns upward after epoch 5: the model is memorising the training set. Early stopping keeps the checkpoint with the lowest validation loss.",
   },

@@ -40,7 +40,7 @@ export const dcaiBankA: Question[] = [
 2  ????????  ->  write to vector database
 3  User question -> embed -> top-k similarity search
 4  Retrieved chunks + question -> LLM prompt`,
-    choices: ["Each chunk is run through an embedding model; the vectors are stored with the text", "The LLM is fine-tuned on each chunk; the updated weights are stored", "Each chunk is tokenised; the token IDs are stored for the LLM to read", "The LLM summarises each chunk; the summaries are stored for retrieval"],
+    choices: ["Each chunk is run through an embedding model; the vectors are stored with the text", "The LLM is fine-tuned on each chunk, and the updated weights are stored in the database", "Each chunk is tokenised; the token IDs are stored for the LLM to read", "The LLM summarises each chunk; the summaries are stored for retrieval"],
     answer: 0,
     explain: "The vector database holds embeddings (plus the source text) so step 3 can find chunks similar to the embedded question. RAG doesn't change the model's weights.",
   },
@@ -131,7 +131,7 @@ spec:
     resources:
       limits:
         nvidia.com/gpu: 2`,
-    choices: ["The NVIDIA device plugin (for example via the GPU Operator)", "A PersistentVolumeClaim for the training dataset", "A Slurm partition that maps the node's GPUs", "SR-IOV virtual functions for the node's GPU NICs"],
+    choices: ["The NVIDIA device plugin (for example via the GPU Operator)", "A PersistentVolumeClaim that mounts the training dataset", "A Slurm partition that maps the node's GPUs", "SR-IOV virtual functions for the node's GPU NICs"],
     answer: 0,
     explain: "Kubernetes only schedules nvidia.com/gpu if the device plugin advertises it on the node. Without it the node's allocatable GPU count is zero.",
   },
@@ -145,7 +145,7 @@ spec:
 #SBATCH --gres=gpu:8
 #SBATCH --ntasks-per-node=8
 srun python train.py`,
-    choices: ["Waits for 4 nodes with 8 free GPUs each, then starts 32 tasks", "Starts 8 tasks as soon as any 8 GPUs in the cluster are free", "Starts 4 tasks, one per node, that share 8 GPUs between them", "Starts 32 tasks on as many nodes as have a free GPU"],
+    choices: ["Waits for 4 nodes with 8 free GPUs each, then starts 32 tasks", "Starts 8 tasks as soon as any 8 GPUs anywhere in the cluster are free", "Starts 4 tasks, one per node, that share 8 GPUs between them", "Starts 32 tasks on as many nodes as have a free GPU"],
     answer: 0,
     explain: "Slurm allocates all four nodes with eight GPUs each before launching, then srun starts 8 tasks per node: 32 ranks, one per GPU.",
   },
@@ -299,7 +299,7 @@ NIC0    PIX   SYS    X    SYS
 NIC1    SYS   PIX   SYS    X
 
 PIX = single PCIe bridge   SYS = crosses the CPU interconnect`,
-    choices: ["Traffic crosses the CPU interconnect; use NIC0, on GPU0's PCIe switch", "Traffic reaches NIC1 over NVLink, so there's no real effect", "SYS paths are faster for GPUDirect RDMA than PIX; keep NIC1", "NIC1 can't reach GPU0 at all, so the job fails to start"],
+    choices: ["Traffic crosses the CPU interconnect; use NIC0, on GPU0's PCIe switch", "Traffic reaches NIC1 over NVLink, so there's no real effect on the job", "SYS paths are faster for GPUDirect RDMA than PIX; keep NIC1", "NIC1 can't reach GPU0 at all, so the job fails to start"],
     answer: 0,
     explain: "PIX means GPU0 and NIC0 share a PCIe switch, so GPUDirect RDMA stays local. GPU0 to NIC1 is SYS: it crosses sockets, adding latency and cutting bandwidth.",
   },

@@ -22,19 +22,30 @@ export const encorBankC: Question[] = [
     id: "e-302",
     objective: "4.1",
     kind: "single",
-    prompt: "Which ping option finds the largest packet that can cross a path without fragmentation?",
-    choices: ["size with the DF bit set", "repeat with a large count", "source from a loopback", "timeout set to zero"],
+    prompt: "Refer to the exhibit. What does it show about the path from R1 to 10.2.2.2?",
+    exhibit: `R1# ping 10.2.2.2 size 1500 df-bit
+Type escape sequence to abort.
+Sending 5, 1500-byte ICMP Echos to 10.2.2.2, timeout is 2 seconds:
+Packet sent with the DF bit set
+M.M.M
+Success rate is 0 percent (0/5)
+
+R1# ping 10.2.2.2 size 1400 df-bit
+...
+!!!!!
+Success rate is 100 percent (5/5)`,
+    choices: ["A link on the path has an MTU below 1,500 bytes", "10.2.2.2 has an ACL that blocks packets over 1,400 bytes", "The path MTU is exactly 1,400 bytes", "The far end can't reassemble fragmented packets"],
     answer: 0,
-    explain: "Extended ping with `df-bit` and increasing `size` (or a sweep) finds the path MTU: packets above it fail with 'M' (could not fragment).",
+    explain: "M means 'could not fragment': a router needed to fragment a DF packet. The path MTU is somewhere between 1,400 and 1,499; keep testing sizes to find it.",
   },
   {
     id: "e-303",
     objective: "4.1",
     kind: "single",
-    prompt: "`logging buffered 6` is configured. Which messages go to the local buffer?",
-    choices: ["Levels 0 to 6", "Only level 6", "Levels 6 and 7", "All levels 0 to 7"],
+    prompt: "`logging buffered 6` is configured. A %LINK-3-UPDOWN message, a %SYS-5-CONFIG_I message and a debug message are generated. Which ones reach the local buffer?",
+    choices: ["The LINK-3 and SYS-5 messages, but not the debug", "Only the debug message, at severity 7", "Only the LINK-3 message, at severity 3", "All three, because the buffer ignores message severity"],
     answer: 0,
-    explain: "A logging threshold includes that level and every more severe (lower-numbered) one. 6 = informational, so only debugging (7) is excluded.",
+    explain: "Level 6 (informational) includes severities 0 to 6. Debug output is severity 7.",
   },
   {
     id: "e-304",
@@ -444,20 +455,20 @@ control-plane
   {
     id: "e-343",
     objective: "5.4",
-    kind: "single",
-    prompt: "In 802.1X, which role does the switch play?",
-    choices: ["Supplicant", "Authenticator", "Authentication server", "Certificate authority"],
-    answer: 1,
-    explain: "The client is the supplicant, the switch (or WLC) is the authenticator relaying EAP, and RADIUS/ISE is the authentication server.",
+    kind: "multi",
+    prompt: "In an 802.1X deployment with a Catalyst switch and Cisco ISE, which TWO statements are true?",
+    choices: ["The switch is the authenticator", "ISE is the authentication server", "The switch is the supplicant", "ISE is the authenticator", "The PC is the authentication server"],
+    answer: [0, 1],
+    explain: "The endpoint is the supplicant, the switch relays EAP as the authenticator, and ISE (RADIUS) is the authentication server.",
   },
   {
     id: "e-344",
     objective: "5.4",
     kind: "single",
-    prompt: "Which feature would let an NGFW block a specific application (for example, BitTorrent) regardless of the port it uses?",
-    choices: ["Application visibility and control", "Stateful port and protocol filtering", "NAT with port address translation", "Unicast reverse path forwarding"],
+    prompt: "Users run BitTorrent over TCP 443 to get around the port-based rules on the perimeter firewall. Which capability lets a next-generation firewall block it anyway?",
+    choices: ["Application visibility and control (AppID)", "Stateful inspection of every TCP session", "Static PAT on the outside interface", "A standard ACL on the inside interface"],
     answer: 0,
-    explain: "NGFWs identify applications by behaviour and signatures (AVC/OpenAppID), not just port numbers.",
+    explain: "NGFW application identification recognises the application from its behaviour and payload, whatever port it uses.",
   },
   {
     id: "e-345",
@@ -490,10 +501,10 @@ control-plane
     id: "e-348",
     objective: "5.4",
     kind: "single",
-    prompt: "Which Cisco product provides DNS-layer security, blocking requests to malicious domains before a connection is made?",
-    choices: ["Secure Endpoint", "Umbrella", "Duo", "Secure Network Analytics"],
-    answer: 1,
-    explain: "Umbrella resolves DNS and blocks known-bad domains at the lookup stage, both on and off network.",
+    prompt: "Laptops that roam off the corporate network must be stopped from resolving known phishing domains before any connection is made. Which Cisco product fits?",
+    choices: ["Umbrella (DNS-layer security)", "Secure Endpoint", "Duo", "Secure Network Analytics (flow telemetry)"],
+    answer: 0,
+    explain: "Umbrella answers DNS queries and blocks malicious domains at resolution time, on or off network through its roaming client.",
   },
   {
     id: "e-349",
@@ -770,9 +781,15 @@ print("ok")`,
     id: "e-374",
     objective: "6.7",
     kind: "single",
-    prompt: "Which Ansible file lists the devices and groups a playbook can target?",
-    choices: ["Inventory", "Playbook", "Role", "Module"],
+    prompt: "Refer to the exhibit. What is this file, and which hosts does a play with `hosts: leaves` target?",
+    exhibit: `[leaves]
+leaf1 ansible_host=10.0.0.11
+leaf2 ansible_host=10.0.0.12
+
+[spines]
+spine1 ansible_host=10.0.0.21`,
+    choices: ["An inventory; leaf1 and leaf2", "A playbook; leaf1 and leaf2", "An inventory; all three switches", "A role definition; leaf1 only"],
     answer: 0,
-    explain: "The inventory (INI or YAML, static or dynamic) defines hosts, groups and their variables.",
+    explain: "The inventory lists hosts and groups. A play's hosts line picks a group, here leaves.",
   },
 ];

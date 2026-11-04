@@ -345,7 +345,7 @@ interface Ethernet1/1
     exhibit: `Ethernet1/49   5-minute input rate   88 Gb/s of 400 Gb/s (22%)
 Burst detect (last hour, qos-group 3):
   events 1,284   longest 180 us   peak queue depth 92% of buffer`,
-    choices: ["Microbursts that the 5-minute average hides", "CRC errors that RoCE silently retransmits", "Hash polarisation of flows onto Eth1/49", "A 4:1 oversubscribed uplink on the leaf"],
+    choices: ["Microbursts that the 5-minute average hides", "CRC errors that RoCE silently retransmits on the link", "Hash polarisation of flows onto Eth1/49", "A 4:1 oversubscribed uplink on the leaf"],
     answer: 0,
     explain: "Bursts of a few hundred microseconds fill the queue to 92% while the long-term average is 22%. Polarisation or oversubscription would show high average utilisation.",
   },

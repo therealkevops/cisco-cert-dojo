@@ -34,11 +34,11 @@ export const encorBankA: Question[] = [
   {
     id: "e-104",
     objective: "1.1.a",
-    kind: "single",
-    prompt: "Which cloud service model gives the customer the most control over the operating system?",
-    choices: ["SaaS", "PaaS", "IaaS", "FaaS"],
-    answer: 2,
-    explain: "With IaaS the provider runs hardware and virtualisation; the customer manages the OS and everything above it. PaaS hides the OS, and SaaS delivers a finished application.",
+    kind: "multi",
+    prompt: "Which TWO statements about IaaS are true?",
+    choices: ["The customer manages the guest operating system", "The provider manages the physical hosts", "The provider patches the customer's applications", "The customer manages the hypervisor layer", "The customer has no control over networking"],
+    answer: [0, 1],
+    explain: "IaaS gives the customer the OS and everything above it; the provider runs the hardware and virtualisation. Customers usually control virtual networks too.",
   },
   {
     id: "e-105",
@@ -108,10 +108,10 @@ export const encorBankA: Question[] = [
     id: "e-112",
     objective: "1.2",
     kind: "single",
-    prompt: "A new WAN Edge is plugged in with only Internet access. Which component does it contact first?",
-    choices: ["SD-WAN Validator", "SD-WAN Manager", "SD-WAN Controller", "The nearest WAN Edge"],
+    prompt: "A new WAN Edge is shipped to a branch and plugged in with only an Internet circuit and no configuration beyond what PnP provides. Which overlay component does it contact first, and why?",
+    choices: ["The SD-WAN Validator, to authenticate and learn the controllers", "The SD-WAN Manager, to download its complete device template", "The SD-WAN Controller, to receive its OMP routes and policies", "A peer WAN Edge, to build its first IPsec data-plane tunnel"],
     answer: 0,
-    explain: "The Validator is the orchestrator: it authenticates the edge and tells it where to find the controllers and manager. Plug-and-Play / ZTP points the device at the Validator.",
+    explain: "The Validator (vBond) authenticates the edge, tells it where the Manager and Controllers are and helps with NAT traversal. Templates and OMP come afterwards.",
   },
   {
     id: "e-113",
@@ -154,10 +154,10 @@ export const encorBankA: Question[] = [
     id: "e-117",
     objective: "1.3",
     kind: "single",
-    prompt: "Which component in SD-Access assigns the Scalable Group Tag to a user when they authenticate?",
-    choices: ["Catalyst Center", "Cisco ISE", "The border node", "The control plane node"],
-    answer: 1,
-    explain: "ISE is the policy server. It authenticates the user/device and returns the SGT; Catalyst Center defines and pushes the fabric policy.",
+    prompt: "A contractor authenticates with 802.1X on an SD-Access edge port and is placed in the Contractors group, which may reach only the Internet. Which component assigns the group tag, and where is the policy enforced?",
+    choices: ["ISE assigns the SGT; the egress edge or border enforces SGACLs", "Catalyst Center assigns the SGT; the control-plane node enforces it", "The edge node assigns the SGT from the VLAN; ISE enforces it", "The border node assigns the SGT; the fabric WLC enforces it"],
+    answer: 0,
+    explain: "ISE returns the SGT in the authorisation result. The tag travels in the VXLAN header, and SGACLs are applied where the traffic leaves the fabric.",
   },
   // 1.4 QoS
   {
@@ -250,11 +250,11 @@ interface GigabitEthernet0/1
   {
     id: "e-126",
     objective: "2.1",
-    kind: "single",
-    prompt: "Which statement best distinguishes containers from virtual machines?",
-    choices: ["Containers share the host kernel, so they're lighter", "Containers each run their own complete guest OS kernel", "Containers need a Type 1 hypervisor underneath them", "VMs share the host kernel, so VMs start up faster"],
-    answer: 0,
-    explain: "A VM virtualises hardware and runs its own OS. Containers isolate processes on a shared kernel, which makes them lighter but less isolated.",
+    kind: "multi",
+    prompt: "Which TWO statements about containers, compared with virtual machines, are true?",
+    choices: ["Containers share the host's OS kernel", "Containers usually start in seconds", "Each container runs a full guest OS", "Containers need a Type 1 hypervisor", "VMs share the host kernel with each other"],
+    answer: [0, 1],
+    explain: "Containers isolate processes on a shared kernel, so they're small and start quickly. VMs each run their own OS on a hypervisor.",
   },
   {
     id: "e-127",
@@ -285,10 +285,21 @@ R1# ping 10.50.0.2
     id: "e-129",
     objective: "2.2.a",
     kind: "single",
-    prompt: "Two customers both use 192.168.1.0/24 on the same router. What makes this possible?",
-    choices: ["Separate VRFs", "Secondary addresses", "NAT on every interface", "Policy-based routing"],
+    prompt: "Refer to the exhibit. What happens when this configuration is applied?",
+    exhibit: `vrf definition CUST-A
+ address-family ipv4
+vrf definition CUST-B
+ address-family ipv4
+!
+interface GigabitEthernet0/1
+ vrf forwarding CUST-A
+ ip address 192.168.1.1 255.255.255.0
+interface GigabitEthernet0/2
+ vrf forwarding CUST-B
+ ip address 192.168.1.1 255.255.255.0`,
+    choices: ["Both are accepted; each VRF has its own routing table", "Gi0/2 is rejected with an overlapping-address error message", "Both are accepted, but only Gi0/1 forwards traffic", "Both are rejected until each VRF has an RD set"],
     answer: 0,
-    explain: "Each VRF has an independent routing and forwarding table, so overlapping prefixes in different VRFs don't conflict.",
+    explain: "Each VRF is a separate routing and forwarding table, so the same subnet (even the same address) can exist in both. VRF-lite doesn't need route distinguishers.",
   },
   {
     id: "e-130",
@@ -329,10 +340,10 @@ R1# show ip route 203.0.113.2
     id: "e-133",
     objective: "2.2.b",
     kind: "single",
-    prompt: "What is the typical `ip mtu` set on a GRE tunnel over a 1500-byte path, without IPsec?",
-    choices: ["1500", "1476", "1400", "1280"],
-    answer: 1,
-    explain: "GRE adds 24 bytes (a 20-byte outer IP header plus a 4-byte GRE header), so 1500 − 24 = 1476. With IPsec as well, 1400 is a common safe value.",
+    prompt: "A GRE tunnel without IPsec runs over a path with a 1500-byte MTU. Pings work, but large file transfers through the tunnel stall. Which settings fix it?",
+    choices: ["ip mtu 1476 and ip tcp adjust-mss 1436 on the tunnel", "ip mtu 1500 and ip tcp adjust-mss 1460 on the tunnel", "ip mtu 1400 on the physical interface only", "tunnel mode gre multipoint on both of the ends"],
+    answer: 0,
+    explain: "GRE adds 24 bytes, leaving 1476 for the inner packet; subtracting 40 bytes of IP and TCP headers gives an MSS of 1436.",
   },
   {
     id: "e-134",
@@ -413,10 +424,10 @@ R1# show ip route 203.0.113.2
     id: "e-142",
     objective: "2.3.b",
     kind: "single",
-    prompt: "What MTU should the underlay support for VXLAN carrying standard 1500-byte frames?",
-    choices: ["1500", "At least 1550", "1400", "9216 is mandatory"],
-    answer: 1,
-    explain: "VXLAN adds about 50 bytes (outer Ethernet, IP, UDP and VXLAN header). The underlay needs at least 1550, and jumbo frames are common.",
+    prompt: "Hosts send standard 1500-byte frames in a VXLAN fabric with an IPv4 underlay. What is the minimum underlay IP MTU, and why?",
+    choices: ["1550: VXLAN adds 50 bytes of outer headers", "1524: VXLAN adds 24 bytes of outer headers", "1500: the VTEP fragments anything larger", "9216: VXLAN requires jumbo frames by design"],
+    answer: 0,
+    explain: "Outer Ethernet (14), IP (20), UDP (8) and VXLAN (8) add 50 bytes. In practice the underlay is usually set to 9216 for headroom, but 1550 is the minimum.",
   },
   {
     id: "e-143",

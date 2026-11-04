@@ -237,11 +237,11 @@ for key, value in intf.items():
   {
     id: "e-863",
     objective: "6.2",
-    kind: "single",
-    prompt: "How are the boolean values written in JSON?",
-    choices: ["true and false", "True and False", "TRUE and FALSE", "1 and 0 only"],
-    answer: 0,
-    explain: "Python's json module converts True/False to true/false.",
+    kind: "multi",
+    prompt: "Which TWO are valid JSON literals?",
+    choices: ["true", "null", "True", "None", "'yes'"],
+    answer: [0, 1],
+    explain: "JSON literals are lower-case true, false and null. True and None are Python; JSON strings need double quotes.",
   },
   {
     id: "e-864",
@@ -528,11 +528,11 @@ for key, value in intf.items():
   {
     id: "e-912",
     objective: "6.7",
-    kind: "single",
-    prompt: "Which tool uses a pull model where agents fetch their configuration from a master?",
-    choices: ["Puppet (and Chef)", "Ansible", "Terraform with SSH", "Netmiko"],
-    answer: 0,
-    explain: "Puppet and Chef agents pull. Ansible pushes from a control node without agents.",
+    kind: "multi",
+    prompt: "Which TWO tools use agents that pull their configuration from a central server?",
+    choices: ["Puppet", "Chef", "Ansible", "Netmiko", "NETCONF"],
+    answer: [0, 1],
+    explain: "Puppet agents and Chef clients pull their catalog or run-list from a server. Ansible pushes over SSH or APIs without an agent.",
   },
   {
     id: "e-913",
