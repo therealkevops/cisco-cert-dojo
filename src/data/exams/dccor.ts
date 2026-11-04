@@ -5,6 +5,8 @@ import { dccorBankC } from "./dccor-bank-c";
 import { dccorBankD } from "./dccor-bank-d";
 import { dccorBankE } from "./dccor-bank-e";
 import { dccorBankF } from "./dccor-bank-f";
+import { dccorBankG } from "./dccor-bank-g";
+import { dccorBankH } from "./dccor-bank-h";
 
 // Blueprint: Implementing Cisco Data Center Core Technologies v1.2 (350-601 DCCOR), exam topics
 // document © 2024. The core exam for CCNP Data Center and the qualifier for the CCIE Data Center lab.
@@ -583,5 +585,5 @@ event manager applet CONF-ALERT
       ],
     },
   ],
-  questions: [...dccorBankA, ...dccorBankB, ...dccorBankC, ...dccorBankD, ...dccorBankE, ...dccorBankF],
+  questions: [...dccorBankA, ...dccorBankB, ...dccorBankC, ...dccorBankD, ...dccorBankE, ...dccorBankF, ...dccorBankG, ...dccorBankH],
 };

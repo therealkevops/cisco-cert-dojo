@@ -3,6 +3,7 @@ import { dcaiBankA } from "./dcai-bank-a";
 import { dcaiBankB } from "./dcai-bank-b";
 import { dcaiBankC } from "./dcai-bank-c";
 import { dcaiBankD } from "./dcai-bank-d";
+import { dcaiBankE } from "./dcai-bank-e";
 
 // Blueprint: Implementing Cisco Data Center AI Infrastructure v1.0 (300-640 DCAI).
 // Exam topics document dated 2025-11-05. Counts toward CCNP Data Center (with 350-601 DCCOR) and the
@@ -365,6 +366,7 @@ show policy-map system type network-qos`,
     ...dcaiBankB,
     ...dcaiBankC,
     ...dcaiBankD,
+    ...dcaiBankE,
     // 1.x
     {
       id: "d-001",
