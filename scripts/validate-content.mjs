@@ -443,7 +443,7 @@ console.log("mock   blueprint draws match domain weights and cover every objecti
 // listed here (the ones rewritten so far), no correct answer may be more than 25% longer than the
 // longest distractor, and the correct answer may be the single longest option in at most 35% of
 // single-answer items (chance is 25% with four options).
-const LENGTH_LINT = ["dcai"];
+const LENGTH_LINT = ["dcai", "dccor"];
 for (const id of LENGTH_LINT) {
   const exam = exams[id];
   let singles = 0;
