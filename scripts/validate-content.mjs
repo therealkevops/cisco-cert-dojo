@@ -439,6 +439,31 @@ for (const exam of Object.values(exams)) {
 }
 console.log("mock   blueprint draws match domain weights and cover every objective");
 
+// Answer-length tells: a test-taker shouldn't be able to score by picking the longest option. For exams
+// listed here (the ones rewritten so far), no correct answer may be more than 25% longer than the
+// longest distractor, and the correct answer may be the single longest option in at most 35% of
+// single-answer items (chance is 25% with four options).
+const LENGTH_LINT = ["dcai"];
+for (const id of LENGTH_LINT) {
+  const exam = exams[id];
+  let singles = 0;
+  let longest = 0;
+  for (const q of exam.questions) {
+    if (q.kind !== "single" && q.kind !== "multi") continue;
+    const right = q.kind === "single" ? [q.answer] : q.answer;
+    const len = q.choices.map((c) => c.length);
+    const minRight = Math.min(...right.map((i) => len[i]));
+    const maxWrong = Math.max(...len.filter((_, i) => !right.includes(i)));
+    if (minRight > maxWrong * 1.25 && minRight - maxWrong > 6) fail(`${q.id}: correct answer is ${Math.round((100 * minRight) / maxWrong) - 100}% longer than every distractor`);
+    if (q.kind === "single") {
+      singles++;
+      if (len[q.answer] > maxWrong) longest++;
+    }
+  }
+  if (longest / singles > 0.35) fail(`${id}: the correct answer is the longest option in ${Math.round((100 * longest) / singles)}% of single-answer items`);
+  console.log(`lint   ${id}: correct answer longest in ${Math.round((100 * longest) / singles)}% of single-answer items`);
+}
+
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.
 const ids = new Set();
 for (const e of worksheets) {
