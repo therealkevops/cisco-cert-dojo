@@ -20,6 +20,9 @@ import { gradeAci, evaluate as evaluateAci } from "../src/lib/aci.ts";
 import { basePair, vpcScenarios } from "../src/data/vpc.ts";
 import { gradeVpc, evaluate as evaluateVpc } from "../src/lib/vpc.ts";
 import { runVpcCli } from "../src/lib/vpc-cli.ts";
+import { baseFabric, evpnScenarios } from "../src/data/evpn.ts";
+import { gradeEvpn, ping as evpnPing } from "../src/lib/evpn.ts";
+import { runEvpnCli } from "../src/lib/evpn-cli.ts";
 import { checkStep, shownAnswer } from "../src/data/sizing.ts";
 import { worksheets } from "../src/data/worksheets.ts";
 import { simulate, gradeFabric } from "../src/lib/fabric/sim.ts";
@@ -391,6 +394,30 @@ console.log(`san    ${sanScenarios.length} tickets (broken as shipped, CLI refer
     for (const g of gradeVpc(lab, sc.goals)) if (!g.ok) fail(`vpc ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
   }
   console.log(`vpc    ${vpcScenarios.length} scenarios (broken as shipped, CLI reference fix passes)`);
+}
+
+// VXLAN EVPN Lab: every host pair works (at 1500 bytes) in the base fabric; each scenario fails as
+// shipped and the CLI reference fix passes.
+{
+  const b = baseFabric();
+  for (const x of b.hosts) for (const y of b.hosts) if (x !== y && !evpnPing(b, x.id, y.id, 1500).ok) fail(`evpn base fabric: ${x.id} → ${y.id} fails (${evpnPing(b, x.id, y.id, 1500).why})`);
+  for (const sc of evpnScenarios) {
+    if (gradeEvpn(sc.fabric, sc.goals).every((g) => g.ok)) fail(`evpn ${sc.id}: already passes before any fix`);
+    let f = sc.fabric;
+    const before = JSON.stringify(sc.fabric);
+    for (const step of sc.solution) {
+      let sess = { sw: step.sw, mode: { m: "exec" } };
+      for (const line of step.lines) {
+        const r = runEvpnCli(line, sess, f);
+        if (r.out.startsWith("%") || r.out.includes("% Invalid")) fail(`evpn ${sc.id}: "${line}" on ${step.sw} → ${r.out.split("\n").pop()}`);
+        sess = r.session;
+        if (r.fabric) f = r.fabric;
+      }
+    }
+    if (JSON.stringify(sc.fabric) !== before) fail(`evpn ${sc.id}: the CLI mutated the shipped fabric`);
+    for (const g of gradeEvpn(f, sc.goals)) if (!g.ok) fail(`evpn ${sc.id}: reference fix fails "${g.goal.label}" (${g.detail})`);
+  }
+  console.log(`evpn   ${evpnScenarios.length} scenarios (broken as shipped, CLI reference fix passes)`);
 }
 
 // Sizing Desk: every step has a finite answer that its own grader accepts, and a worked solution.

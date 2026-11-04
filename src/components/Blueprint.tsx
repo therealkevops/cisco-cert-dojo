@@ -157,7 +157,7 @@ export function Blueprint({ examId }: { examId: string }) {
                 {hands.map((x) => (
                   <li key={x.id}>
                     <Link href={x.href}>
-                      <span className="silk">{{ wire: "Wire Room", fabric: "Fabric Lab", sizing: "Sizing Desk", desk: "Worksheet", ucs: "UCS lab", san: "SAN Lab", aci: "ACI lab", vpc: "vPC Lab", lab: "Config drill" }[x.kind]}</span>
+                      <span className="silk">{{ wire: "Wire Room", fabric: "Fabric Lab", sizing: "Sizing Desk", desk: "Worksheet", ucs: "UCS lab", san: "SAN Lab", aci: "ACI lab", vpc: "vPC Lab", evpn: "EVPN Lab", lab: "Config drill" }[x.kind]}</span>
                       <span className="t">{x.title}</span>
                       <span className={`state ${practicalDone(p, x) ? "done" : ""}`}>{practicalDone(p, x) ? "done ✓" : "open →"}</span>
                     </Link>

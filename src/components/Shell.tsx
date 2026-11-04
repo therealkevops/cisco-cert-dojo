@@ -94,6 +94,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <Link href="/san" className="hide-sm">
             san
           </Link>
+          <Link href="/evpn" className="hide-sm">
+            evpn
+          </Link>
           <Link href="/vpc" className="hide-sm">
             vpc
           </Link>

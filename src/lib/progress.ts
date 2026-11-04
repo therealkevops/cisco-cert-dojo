@@ -37,11 +37,12 @@ export type Progress = {
   san: Record<string, { at: number }>; // solved SAN Lab tickets
   aci: Record<string, { at: number }>; // solved ACI Policy Lab scenarios
   vpc: Record<string, { at: number }>; // solved vPC Lab tickets
+  evpn: Record<string, { at: number }>; // solved VXLAN EVPN Lab tickets
   days: string[]; // YYYY-MM-DD with any activity
 };
 
 const KEY = "cert-dojo:v1";
-const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, ucs: {}, san: {}, aci: {}, vpc: {}, days: [] };
+const EMPTY: Progress = { v: 1, cards: {}, labs: {}, mocks: [], read: {}, wire: {}, fabric: {}, sizing: {}, ucs: {}, san: {}, aci: {}, vpc: {}, evpn: {}, days: [] };
 
 const DAY = 86_400_000;
 /** Review interval per Leitner box. Box 0 = "again soon". */
@@ -163,6 +164,12 @@ export function recordVpc(id: string) {
   save({ ...p, vpc: { ...p.vpc, [id]: { at: Date.now() } }, days: touchDay(p) });
 }
 
+export function recordEvpn(id: string) {
+  const p = load();
+  if (p.evpn[id]) return;
+  save({ ...p, evpn: { ...p.evpn, [id]: { at: Date.now() } }, days: touchDay(p) });
+}
+
 export function recordMock(result: MockResult) {
   const p = load();
   save({ ...p, mocks: [...p.mocks, result].slice(-50), days: touchDay(p) });
@@ -202,6 +209,7 @@ export function practicalDone(p: Progress, x: Practical): boolean {
   if (x.kind === "san") return !!p.san[x.id];
   if (x.kind === "aci") return !!p.aci[x.id];
   if (x.kind === "vpc") return !!p.vpc[x.id];
+  if (x.kind === "evpn") return !!p.evpn[x.id];
   return !!p.labs[x.id];
 }
 

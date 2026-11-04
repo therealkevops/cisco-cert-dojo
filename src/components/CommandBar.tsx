@@ -9,6 +9,7 @@ import { ucsScenarios } from "@/data/ucs";
 import { sanScenarios } from "@/data/san";
 import { aciScenarios } from "@/data/aci";
 import { vpcScenarios } from "@/data/vpc";
+import { evpnScenarios } from "@/data/evpn";
 import { deskSheets as deskExercises } from "@/data/worksheets";
 import { sizingExercises } from "@/data/sizing";
 import { scenarios } from "@/data/wire";
@@ -38,6 +39,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
       { name: "san", help: "SAN Lab: troubleshoot a Fibre Channel fabric from an MDS-style CLI (DCCOR)", run: go("/san") },
       { name: "aci", help: "ACI Policy Lab: access policies, EPGs and contracts with APIC-style faults (DCCOR)", run: go("/aci") },
       { name: "vpc", help: "vPC Lab: troubleshoot a Nexus vPC pair from NX-OS consoles (DCCOR)", run: go("/vpc") },
+      { name: "evpn", help: "VXLAN EVPN Lab: troubleshoot a spine-leaf EVPN fabric from NX-OS consoles (DCCOR)", run: go("/evpn") },
       { name: "desk", help: "Design & Automation Desk: ENCOR worksheets (JSON, YANG, APIs, Python, design maths)", run: go("/desk") },
       { name: "wire", help: "network canvas: build, cable, configure, ping", run: go("/wire") },
       { name: "wire challenges", help: "troubleshooting challenges", run: go("/wire/challenges") },
@@ -53,6 +55,7 @@ export function CommandBar({ onClose, toggleTheme }: { onClose: () => void; togg
     for (const s of sanScenarios) list.push({ name: `san ${s.id.replace(/^san-/, "")}`, help: s.title, run: go(`/san/${s.id}`) });
     for (const s of aciScenarios) list.push({ name: `aci ${s.id.replace(/^aci-/, "")}`, help: s.title, run: go(`/aci/${s.id}`) });
     for (const s of vpcScenarios) list.push({ name: `vpc ${s.id.replace(/^vpc-/, "")}`, help: s.title, run: go(`/vpc/${s.id}`) });
+    for (const s of evpnScenarios) list.push({ name: `evpn ${s.id.replace(/^evpn-/, "")}`, help: s.title, run: go(`/evpn/${s.id}`) });
     for (const s of fabricScenarios) list.push({ name: `fabric ${s.id}`, help: s.title, run: go(`/fabric/${s.id}`) });
     for (const s of scenarios) list.push({ name: `wire ${s.id}`, help: s.title, run: go(`/wire/${s.id}`) });
     for (const l of labs) list.push({ name: `lab ${l.id}`, help: l.title, run: go(`/labs/${l.id}`) });

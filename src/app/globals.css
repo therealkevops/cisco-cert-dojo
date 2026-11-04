@@ -1425,3 +1425,7 @@ h3.display { font-size: 28px; }
 .vpc-pl line { stroke-width: 2.4; }
 .san-sw.off rect { stroke-dasharray: 4 4; opacity: 0.5; }
 .san-sw.off text { opacity: 0.5; }
+
+/* VXLAN EVPN Lab (reuses the SAN Lab layout) */
+.evpn-ip { fill: var(--muted) !important; font-size: 8.5px !important; }
+.evpn-tester { margin-top: 10px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
