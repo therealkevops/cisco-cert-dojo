@@ -136,7 +136,7 @@ export const aciScenarios: AciScenario[] = [
     symptoms: ["bkp01 → db01 tcp/10000 is dropped", "db01 → bkp01 tcp/10000 is permitted", "Contract backup has one subject, both directions, reverse filter ports on"],
     hint: "Who starts the session? The consumer opens connections to the provider.",
     debrief:
-      "Provider and consumer are about who initiates. The EPG that offers the service (the DB, listening on tcp/10000) provides; the client (the backup server) consumes. With **apply both directions** and **reverse filter ports**, the filter permits consumer → provider to port 10000 and the replies back from source port 10000, but not new sessions from the provider. Swapping the relations fixes both complaints at once.",
+      "Provider and consumer are about who initiates. The EPG that offers the service (the DB, listening on tcp/10000) provides; the client (the backup server) consumes. With **apply both directions** and **reverse filter ports**, the filter permits consumer → provider to port 10000 and the replies back from source port 10000, but not new sessions from the provider to the consumer on that port. Swapping the relations fixes both complaints at once.",
     model: tweak((m) => {
       m.bds.push({ name: "BKP_BD", vrf: "PROD", subnets: "10.1.9.1/24", routing: true });
       m.epgs.push({ name: "Backup", ap: "SHOP", bd: "BKP_BD", domains: ["SHOP_PHYS"], paths: "101 eth1/12 vlan-190", provides: ["backup"], consumes: [] });
