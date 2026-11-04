@@ -467,7 +467,7 @@ for (const id of LENGTH_LINT) {
 // Question shape: real exams lean on exhibits, scenarios and "choose two". At least 20% of each listed
 // exam's items must carry an exhibit or a scenario stem (120+ characters), and at least 10% must be
 // multi-answer. Every "Refer to the exhibit" prompt needs an exhibit, and every exhibit needs that cue.
-const SHAPE_LINT = ["dcai"];
+const SHAPE_LINT = ["dcai", "dccor"];
 for (const exam of Object.values(exams)) {
   for (const q of exam.questions) {
     const cue = /refer to the exhibit/i.test(q.prompt);
